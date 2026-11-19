@@ -1,0 +1,105 @@
+"""Manual URL import and procurement document import workflows."""
+
+import hashlib
+from pathlib import Path
+
+import httpx
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app.ai.openrouter import AISummary, AIUnavailable, get_ai
+from app.config import get_settings
+from app.connectors.base import CollectedItem
+from app.documents import analyse_document, extract_html, parse_date
+from app.enums import Category
+from app.http_client import SafeHttp
+from app.models import Opportunity, Source
+from app.normalize import canonical_url, truncate
+from app.pipeline import IngestOutcome, ingest_item
+
+
+def _source(db: Session, key: str) -> Source:
+    src = db.scalar(select(Source).where(Source.key == key))
+    if not src:
+        raise LookupError(f"Source '{key}' missing — run seeding")
+    return src
+
+
+def import_url(db: Session, url: str, *, org_name: str | None = None, note: str | None = None, http_client: httpx.Client | None = None, resolver=None, actor: str = "owner") -> IngestOutcome:
+    kwargs = {"rate_limit_per_minute": 30}
+    if resolver:
+        kwargs["resolver"] = resolver
+    http = SafeHttp(http_client, **kwargs)
+    try:
+        res = http.get(url)
+    finally:
+        if http_client is None:
+            http.close()
+    if "html" not in res.content_type and not res.content.lstrip()[:1] == b"<":
+        raise ValueError(f"Unsupported content type '{res.content_type}'. Use document import for PDF/DOCX.")
+    title, text = extract_html(res.content)
+    if note:
+        text = f"{text}\n\nOwner note: {note}"
+    canon = canonical_url(res.url) or res.url
+    item = CollectedItem(
+        external_id=f"url:{hashlib.sha256(canon.encode()).hexdigest()[:32]}",
+        url=res.url, title=title or canon, content=text or (title or canon), raw={"requested_url": url, "final_url": res.url},
+        org_name=org_name, org_website=res.url if org_name else None, evidence_type="page",
+    )
+    outcome = ingest_item(db, _source(db, "manual_url"), None, item, actor=actor)
+    db.commit()
+    return outcome
+
+
+def import_document(db: Session, file_name: str, data: bytes, *, buyer: str | None = None, source_url: str | None = None, actor: str = "owner") -> tuple[IngestOutcome, dict]:
+    s = get_settings()
+    if len(data) > s.upload_max_bytes:
+        raise ValueError("File too large")
+    safe_name = Path(file_name).name[:200]
+    analysis = analyse_document(safe_name, data)
+    digest = hashlib.sha256(data).hexdigest()
+    up = Path(s.upload_dir)
+    up.mkdir(parents=True, exist_ok=True)
+    (up / f"{digest[:16]}_{safe_name}").write_bytes(data)
+
+    f = analysis.fields
+    title = (f.get("tender_title").value if f.get("tender_title") else None) or safe_name
+    buyer_name = buyer or (f["buyer"].value if f.get("buyer") else None)
+    text = analysis.full_text or f"[No extractable text in {safe_name}]"
+    item = CollectedItem(
+        external_id=f"doc:{digest}",
+        url=source_url, title=f"Tender: {title}"[:500], content=text,
+        raw={"file_name": safe_name, "sha256": digest, "fields": {k: (v.__dict__ if v else None) for k, v in f.items()}},
+        org_name=buyer_name, evidence_type="document", pages=analysis.pages, document_name=safe_name,
+        needs_manual_review=analysis.needs_manual_review,
+    )
+    outcome = ingest_item(db, _source(db, "procurement_documents"), None, item, actor=actor)
+    if outcome.opportunity_id:
+        opp = db.get(Opportunity, outcome.opportunity_id)
+        if outcome.status == "new":
+            if analysis.needs_manual_review and opp.category in (Category.UNKNOWN.value, Category.IRRELEVANT.value):
+                opp.category, opp.pipeline = Category.GOVERNMENT_TENDER.value, "B_vendor"
+                opp.classification_evidence = [analysis.review_reason or "Manual review required"]
+            if f.get("submission_deadline"):
+                opp.deadline = parse_date(f["submission_deadline"].value)
+            if f.get("publication_date"):
+                opp.published_at = parse_date(f["publication_date"].value)
+            if f.get("budget") and not opp.budget_text:
+                opp.budget_text = f["budget"].value[:300]
+            ai = get_ai(db)
+            if ai and analysis.full_text:
+                try:
+                    summ = ai.complete_json("document_summary", "Summarise this tender document for a small software vendor. Only state what the text says.", truncate(analysis.full_text, 20000), AISummary)
+                    opp.summary = summ.summary
+                except AIUnavailable:
+                    pass
+        db.flush()
+    db.commit()
+    return outcome, {
+        "file_name": safe_name,
+        "file_type": analysis.file_type,
+        "pages": len(analysis.pages),
+        "needs_manual_review": analysis.needs_manual_review,
+        "review_reason": analysis.review_reason,
+        "fields": {k: (v.__dict__ if v else None) for k, v in f.items()},
+    }

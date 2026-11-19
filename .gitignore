@@ -1,0 +1,27 @@
+# Secrets
+.env
+*.env.local
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+
+# Data (local SQLite DB, uploaded documents)
+backend/data/
+
+# Node
+node_modules/
+frontend/dist/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+
+# Downloaded data exports (keep out of git)
+*.xls
+*.xlsx
+*.csv
