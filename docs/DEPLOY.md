@@ -12,17 +12,27 @@ Single-process mode (no Vite needed): `cd frontend && npm run build`, then
 `cd backend && uv run python -m app.main` and open http://127.0.0.1:8000 — the backend serves the
 built UI and the API on one port.
 
-## Option A — access from your phone/other laptop privately (recommended next step)
+## Option A — phone + laptop via Tailscale (set up)
 
-Use [Tailscale](https://tailscale.com) (free for personal use): only devices signed into your
-Tailscale account can reach it; nothing is exposed to the public internet.
+Tailscale gives a private network between your own devices; nothing is exposed to the internet.
 
-1. Install Tailscale on the laptop and phone, sign in to the same account.
-2. Set a token in `.env` (required — proxied requests are never treated as local):
-   `IOI_API_TOKEN=$(python3 -c "import secrets; print(secrets.token_urlsafe(32))")`
-3. Build the UI once: `cd frontend && npm run build`; start: `cd backend && uv run python -m app.main`.
-4. `tailscale serve --bg 8000` → open the printed `https://<laptop>.<tailnet>.ts.net` URL on your phone.
-5. In the UI → Settings, paste the token (stored only in that browser).
+```bash
+scripts/install-service.sh     # builds the UI, runs IOI as a systemd user service on 127.0.0.1:8000 (no sudo)
+scripts/tailscale-setup.sh     # installs Tailscale, logs in (browser), publishes IOI over HTTPS to your tailnet (sudo)
+scripts/device-link.sh         # prints a one-time link + QR code per device
+```
+
+- `.env` must contain `IOI_API_TOKEN` (generated already). Requests via Tailscale are proxied, so
+  the token is always required.
+- The device link is `https://<laptop>.<tailnet>.ts.net/#token=…`. The token is in the URL fragment,
+  which browsers never send to the server; the app saves it in that browser and removes it from the
+  address bar. Treat the link like a password.
+- Phone: install the Tailscale app, sign in with the same account, open the link (scan the QR).
+- The laptop must be on (and awake) for the phone to reach it.
+- Service control: `systemctl --user status|restart|stop ioi`, logs `journalctl --user -u ioi -f`.
+  After pulling new code: `scripts/install-service.sh` (rebuilds UI and restarts).
+- Revoke access: change `IOI_API_TOKEN` in `.env`, `systemctl --user restart ioi`, re-run `device-link.sh`.
+- Stop sharing: `tailscale serve reset`.
 
 ## Option B — always-on server (VPS)
 

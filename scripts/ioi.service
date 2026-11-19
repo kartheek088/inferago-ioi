@@ -1,0 +1,14 @@
+# systemd --user unit: keeps IOI running in the background (serves UI + API on 127.0.0.1:8000).
+# Installed by scripts/install-service.sh
+[Unit]
+Description=Inferago IOI (backend + built UI)
+After=network-online.target
+
+[Service]
+WorkingDirectory=__ROOT__/backend
+ExecStart=__UV__ run python -m app.main
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

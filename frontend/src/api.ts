@@ -32,6 +32,20 @@ export function setActor(a: string) {
   }
 }
 
+// One-time device setup: a link like https://host/#token=XYZ stores the token in this browser and
+// removes it from the address bar. URL fragments are never sent to the server or written to logs.
+(function bootstrapTokenFromFragment() {
+  try {
+    const m = window.location.hash.match(/(?:^#|&)token=([A-Za-z0-9_-]{16,200})/);
+    if (m) {
+      setToken(m[1]);
+      window.history.replaceState(null, "", window.location.pathname + window.location.search);
+    }
+  } catch {
+    /* ignore */
+  }
+})();
+
 export class ApiError extends Error {
   constructor(public status: number, message: string) {
     super(message);
