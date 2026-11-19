@@ -12,7 +12,17 @@ Single-process mode (no Vite needed): `cd frontend && npm run build`, then
 `cd backend && uv run python -m app.main` and open http://127.0.0.1:8000 — the backend serves the
 built UI and the API on one port.
 
-## Option A — phone + laptop via Tailscale (set up)
+## Easiest — phone on the same home Wi-Fi
+
+1. `.env`: `IOI_HOST=0.0.0.0` and an `IOI_API_TOKEN` (the server refuses 0.0.0.0 without a token).
+2. Allow the port on your home network only: `sudo ufw allow from 192.168.1.0/24 to any port 8000 proto tcp`
+3. `systemctl --user restart ioi`, then `scripts/device-link.sh` and scan the QR with the phone.
+
+Works only while the phone is on the same Wi-Fi. Traffic is plain HTTP inside your home network,
+so avoid this on shared/public Wi-Fi. The laptop's IP can change after a router restart — just
+re-run `device-link.sh`.
+
+## Option A — phone + laptop anywhere via Tailscale
 
 Tailscale gives a private network between your own devices; nothing is exposed to the internet.
 
