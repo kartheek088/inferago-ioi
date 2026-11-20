@@ -38,7 +38,8 @@ cd frontend && npm run typecheck && npm run build
 | Module | Responsibility |
 |---|---|
 | `models.py`, `enums.py`, `db.py` | ORM schema, vocabularies, engine/session |
-| `connectors/` | Source connectors (hackernews, rss, reddit) — yield `CollectedItem` |
+| `connectors/` | Source connectors (hackernews, rss, reddit, gem) — yield `CollectedItem` |
+| `ai/` | OpenRouter adapter; `extraction.py` = AI locate-and-verify helpers (quotes must match source) |
 | `pipeline.py` | ingest → dedupe → org resolution → evidence → requirements → evaluate; source runs |
 | `classification.py` | deterministic category/service/signal/geography rules |
 | `eligibility.py` | requirement extraction + deterministic evaluation against profile |

@@ -7,6 +7,8 @@ interface SettingsData {
   country_priorities: { match: string; level: string; bonus: number }[];
   research_budget: Record<string, number>;
   profile_overrides: Record<string, unknown>;
+  ai_classification_refinement: boolean;
+  ai_document_extraction: boolean;
   runtime: { ai_enabled: boolean; ai_model: string | null; reddit_configured: boolean; scheduler: { enabled: boolean; jobs: { id: string; next_run: string | null }[] }; auth_mode: string };
 }
 
@@ -19,6 +21,8 @@ export default function SettingsPage() {
   const [prio, setPrio] = useState("");
   const [budget, setBudget] = useState("");
   const [overrides, setOverrides] = useState("");
+  const [aiRefine, setAiRefine] = useState(true);
+  const [aiDocs, setAiDocs] = useState(true);
   const [token, setTok] = useState(getToken());
   const [actor, setAct] = useState(getActor());
 
@@ -28,6 +32,8 @@ export default function SettingsPage() {
     setPrio(JSON.stringify(s.data.country_priorities, null, 2));
     setBudget(JSON.stringify(s.data.research_budget, null, 2));
     setOverrides(JSON.stringify(s.data.profile_overrides, null, 2));
+    setAiRefine(s.data.ai_classification_refinement !== false);
+    setAiDocs(s.data.ai_document_extraction !== false);
   }, [s.data]);
 
   const save = async () => {
@@ -38,6 +44,8 @@ export default function SettingsPage() {
         country_priorities: JSON.parse(prio),
         research_budget: JSON.parse(budget),
         profile_overrides: JSON.parse(overrides || "{}"),
+        ai_classification_refinement: aiRefine,
+        ai_document_extraction: aiDocs,
       };
     } catch {
       act.setMsg({ kind: "err", text: "Country priorities, research budget and profile overrides must be valid JSON." });
@@ -67,6 +75,11 @@ export default function SettingsPage() {
               <dt>Reddit API</dt><dd>{s.data.runtime.reddit_configured ? "Credentials configured" : "Not configured (adapter disabled)"}</dd>
               <dt>Scheduler</dt><dd>{s.data.runtime.scheduler.enabled ? `Running · ${s.data.runtime.scheduler.jobs.length} job(s)` : "Off (opt-in: IOI_SCHEDULER_ENABLED=true)"}{s.data.runtime.scheduler.jobs.map((j) => <div key={j.id} className="muted xs">{j.id} → next {j.next_run}</div>)}</dd>
             </dl>
+          </Card>
+          <Card title="AI assistance (used only when AI is enabled on the server)">
+            <div className="muted xs">AI only locates text; every value must match a verbatim quote from the source, and eligibility is still decided by the rules.</div>
+            <label className="row gap"><input type="checkbox" checked={aiRefine} onChange={(e) => setAiRefine(e.target.checked)} /> Refine uncertain classifications during collection (max 10 AI calls per source run)</label>
+            <label className="row gap"><input type="checkbox" checked={aiDocs} onChange={(e) => setAiDocs(e.target.checked)} /> Document import: fill fields the rules missed and locate requirement clauses</label>
           </Card>
           <div className="grid grid-2">
             <Card title="Search terms">

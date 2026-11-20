@@ -38,6 +38,9 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "min_priority_for_research": 35,
     },
     "profile_overrides": {},
+    # Optional AI (only when IOI_OPENROUTER_* is set). AI locates evidence; rules decide eligibility.
+    "ai_classification_refinement": True,
+    "ai_document_extraction": True,
 }
 
 

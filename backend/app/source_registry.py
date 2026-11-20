@@ -85,9 +85,14 @@ SEED_SOURCES: list[S] = [
          coverage="Manual: use Procurement document import."),
     _src("cppp", "Central Public Procurement Portal (CPPP)", "government_procurement", "web", "planned", base_url="https://eprocure.gov.in",
          country="India", terms="CAPTCHA-protected search; no bypass. Manual document import.", coverage="Manual: use Procurement document import."),
-    _src("gem", "Government e-Marketplace (GeM)", "government_procurement", "web", "planned", base_url="https://gem.gov.in",
-         country="India", auth="Seller registration required for bidding.", terms="No automated bidding or registration (V1 never submits bids).",
-         coverage="Manual: use Procurement document import."),
+    _src("gem", "Government e-Marketplace (GeM) — public bid listing", "government_procurement", "web", "live",
+         base_url="https://bidplus.gem.gov.in/all-bids", connector="gem", country="India",
+         auth="None to read the public listing. Seller registration on GeM is required to BID (owner does this; IOI never bids or registers).",
+         terms="Public all-bids listing (no login, no CAPTCHA; robots.txt allows). Read-only, low rate, bounded pages and document downloads. "
+               "Only service bids matching approved services are kept; goods/licences/hardware and reverse auctions are skipped.",
+         freq=720, rate=12, max_items=40, enabled=False,
+         coverage="Ongoing GeM bids for software development, web/portal, API, automation, ERP/MIS and IT-project services; bid PDF parsed for deadline, buyer, turnover/experience, MSE/startup relaxation, EMD.",
+         config={"search_terms": None, "pages_per_term": 2, "fetch_documents": True, "max_documents": 25, "skip_reverse_auctions": True}),
     _src("gepnic", "Government ePublishing (GePNIC)", "government_procurement", "web", "planned", country="India",
          terms="Manual import only.", coverage="Manual."),
     _src("psu_procurement", "PSU procurement pages", "government_procurement", "web", "planned", country="India",
@@ -113,14 +118,24 @@ SEED_SOURCES: list[S] = [
 ]
 
 
+# Sources that gained a connector after first release: rows still in their original "no connector"
+# state are upgraded once. Rows the owner has already wired to a connector are left alone.
+UPGRADE_WHEN_NO_CONNECTOR = {"gem"}
+
+
 def seed_sources(db: Session) -> int:
-    """Insert missing seed sources. Existing rows (and owner edits) are left untouched."""
-    existing = set(db.scalars(select(Source.key)).all())
+    """Insert missing seed sources. Existing rows (and owner edits) are left untouched,
+    except one-time upgrades of planned sources that now have a connector."""
+    existing = {src.key: src for src in db.scalars(select(Source)).all()}
     n = 0
     for s in SEED_SOURCES:
-        if s["key"] in existing:
-            continue
-        db.add(Source(**s))
-        n += 1
+        row = existing.get(s["key"])
+        if row is None:
+            db.add(Source(**s))
+            n += 1
+        elif s["key"] in UPGRADE_WHEN_NO_CONNECTOR and not row.connector and s.get("connector"):
+            for k, v in s.items():
+                if k not in ("key", "enabled"):
+                    setattr(row, k, v)
     db.commit()
     return n

@@ -7,13 +7,17 @@ import httpx
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.ai.extraction import ai_document_fields, ai_requirement_clauses
 from app.ai.openrouter import AISummary, AIUnavailable, get_ai
 from app.config import get_settings
 from app.connectors.base import CollectedItem
-from app.documents import analyse_document, extract_html, parse_date
+from app.documents import ExtractedField, analyse_document, extract_html, parse_date
+from app.eligibility import extract_requirements
 from app.enums import Category
+from app.evaluation import evaluate_opportunity
 from app.http_client import SafeHttp
-from app.models import Opportunity, Source
+from app.models import EligibilityRequirement, Evidence, Opportunity, Source
+from app.settings_store import get_setting
 from app.normalize import canonical_url, truncate
 from app.pipeline import IngestOutcome, ingest_item
 
@@ -51,6 +55,31 @@ def import_url(db: Session, url: str, *, org_name: str | None = None, note: str 
     return outcome
 
 
+def _add_ai_requirements(db: Session, opp: Opportunity, ai, pages) -> int:
+    """AI locates requirement clauses (verified verbatim); the deterministic rules classify them.
+
+    Only clauses that produce a requirement type not already extracted for the same page are added
+    (origin="ai_located"). Eligibility is then re-evaluated by the rule engine.
+    """
+    existing = {(r.requirement_key, r.page_reference) for r in db.query(EligibilityRequirement).filter_by(opportunity_id=opp.id)}
+    evidence = db.query(Evidence).filter_by(opportunity_id=opp.id).order_by(Evidence.id).first()
+    added = 0
+    for r in extract_requirements(ai_requirement_clauses(ai, pages)):
+        if (r.key.value, r.page_reference) in existing:
+            continue
+        existing.add((r.key.value, r.page_reference))
+        db.add(EligibilityRequirement(
+            opportunity_id=opp.id, scope=r.scope.value, requirement_key=r.key.value, mandatory=r.mandatory,
+            text=r.text, parameters=r.parameters, origin="ai_located", evidence_id=evidence.id if evidence else None,
+            page_reference=r.page_reference,
+        ))
+        added += 1
+    if added:
+        db.flush()
+        evaluate_opportunity(db, opp)
+    return added
+
+
 def import_document(db: Session, file_name: str, data: bytes, *, buyer: str | None = None, source_url: str | None = None, actor: str = "owner") -> tuple[IngestOutcome, dict]:
     s = get_settings()
     if len(data) > s.upload_max_bytes:
@@ -63,6 +92,11 @@ def import_document(db: Session, file_name: str, data: bytes, *, buyer: str | No
     (up / f"{digest[:16]}_{safe_name}").write_bytes(data)
 
     f = analysis.fields
+    ai = get_ai(db) if get_setting(db, "ai_document_extraction") and analysis.full_text else None
+    if ai is not None:
+        missing = [k for k, v in f.items() if v is None]
+        for name, (value, ref, quote) in ai_document_fields(ai, analysis.pages, missing).items():
+            f[name] = ExtractedField(value[:600], ref, quote[:400], method="ai")
     title = (f.get("tender_title").value if f.get("tender_title") else None) or safe_name
     buyer_name = buyer or (f["buyer"].value if f.get("buyer") else None)
     text = analysis.full_text or f"[No extractable text in {safe_name}]"
@@ -86,8 +120,8 @@ def import_document(db: Session, file_name: str, data: bytes, *, buyer: str | No
                 opp.published_at = parse_date(f["publication_date"].value)
             if f.get("budget") and not opp.budget_text:
                 opp.budget_text = f["budget"].value[:300]
-            ai = get_ai(db)
-            if ai and analysis.full_text:
+            if ai is not None:
+                _add_ai_requirements(db, opp, ai, analysis.pages)
                 try:
                     summ = ai.complete_json("document_summary", "Summarise this tender document for a small software vendor. Only state what the text says.", truncate(analysis.full_text, 20000), AISummary)
                     opp.summary = summ.summary

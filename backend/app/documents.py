@@ -24,6 +24,7 @@ class ExtractedField:
     value: str
     page_reference: str | None
     excerpt: str
+    method: str = "rules"  # "rules" or "ai" (AI values are verified verbatim against the document)
 
 
 @dataclass

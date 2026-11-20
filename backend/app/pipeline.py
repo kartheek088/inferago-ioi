@@ -15,9 +15,12 @@ import httpx
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.ai.extraction import AIBudget, ai_refine_classification, should_refine
+from app.ai.openrouter import get_ai
 from app.classification import ClassificationResult, classify
 from app.connectors.base import CollectContext, CollectedItem, Connector, ConnectorUnavailable
 from app.connectors.hackernews import PLATFORM_DOMAINS, HackerNewsConnector
+from app.connectors.gem import GeMConnector
 from app.connectors.reddit import RedditConnector
 from app.connectors.rss import RSSConnector
 from app.db import utcnow
@@ -45,6 +48,7 @@ CONNECTORS: dict[str, Connector] = {
     "hackernews": HackerNewsConnector(),
     "rss": RSSConnector(),
     "reddit": RedditConnector(),
+    "gem": GeMConnector(),
 }
 
 _source_locks: dict[int, threading.Lock] = {}
@@ -113,7 +117,7 @@ def find_duplicate(db: Session, dedupe_key: str, canon: str | None, chash: str) 
     return db.scalar(select(Opportunity).where(Opportunity.content_hash == chash, Opportunity.merged_into_id.is_(None)).limit(1))
 
 
-def ingest_item(db: Session, source: Source, run: SourceRun | None, item: CollectedItem, *, is_demo: bool = False, actor: str = "system") -> IngestOutcome:
+def ingest_item(db: Session, source: Source, run: SourceRun | None, item: CollectedItem, *, is_demo: bool = False, actor: str = "system", ai_budget: AIBudget | None = None) -> IngestOutcome:
     chash = content_hash(item.title, item.content)
     canon = canonical_url(item.url)
     raw = db.scalar(select(RawRecord).where(RawRecord.source_id == source.id, RawRecord.external_id == item.external_id))
@@ -130,6 +134,10 @@ def ingest_item(db: Session, source: Source, run: SourceRun | None, item: Collec
     db.flush()
 
     cls = classify(item.title, item.content, source_category=source.category)
+    if ai_budget is not None and should_refine(cls) and not item.needs_manual_review:
+        ai = ai_budget.take()
+        if ai is not None:
+            ai_refine_classification(ai, item.title, item.content, cls)
     if cls.category in (Category.IRRELEVANT, Category.UNKNOWN) and not item.needs_manual_review:
         return IngestOutcome("rejected", None, f"{cls.category.value}: {'; '.join(cls.evidence)[:200]}")
 
@@ -168,8 +176,11 @@ def ingest_item(db: Session, source: Source, run: SourceRun | None, item: Collec
         status=OpportunityStatus.NEEDS_MANUAL_REVIEW.value if item.needs_manual_review else OpportunityStatus.NEW.value,
         needs_manual_review=item.needs_manual_review,
         is_demo=is_demo,
+        deadline=item.deadline,
     )
     _apply_classification(opp, cls)
+    if item.budget_text and not opp.budget_text:
+        opp.budget_text = item.budget_text[:300]
     db.add(opp)
     db.flush()
     evidence.opportunity_id = opp.id
@@ -275,12 +286,15 @@ def _run_source_locked(db, source, trigger, query_terms, discovery_job_id, http_
     ctx = CollectContext(http=http, config=source.config or {}, cursor=cursor, query_terms=terms, max_items=source.max_items_per_run, log=log)
     item_errors = 0
     started = time.monotonic()
+    ai_budget = None
+    if get_setting(db, "ai_classification_refinement"):
+        ai_budget = AIBudget(get_ai(db), int((source.config or {}).get("ai_refine_max_per_run", 10)))
     try:
         for item in connector.collect(ctx):
             run.items_fetched += 1
             try:
                 with db.begin_nested():
-                    outcome = ingest_item(db, source, run, item)
+                    outcome = ingest_item(db, source, run, item, ai_budget=ai_budget)
                 if outcome.status == "new":
                     run.items_new += 1
                 elif outcome.status in ("duplicate", "updated"):
@@ -305,6 +319,8 @@ def _run_source_locked(db, source, trigger, query_terms, discovery_job_id, http_
     finally:
         run.requests_made = http.requests_made
         run.finished_at = utcnow()
+        if ai_budget is not None and ai_budget.ai is not None:
+            log(f"AI classification refinement calls: {ai_budget.ai.calls}")
         log(f"Finished in {time.monotonic() - started:.1f}s: fetched={run.items_fetched} new={run.items_new} dup={run.items_duplicate} rejected={run.items_rejected}")
         run.log = logs[-200:]
         log_activity(db, "source", source.id, f"run_{run.status}", {"run_id": run.id, "new": run.items_new})

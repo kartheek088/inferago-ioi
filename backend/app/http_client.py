@@ -29,7 +29,14 @@ class RobotsDisallowedError(FetchError):
     pass
 
 
+NAT64_PREFIX = ipaddress.ip_network("64:ff9b::/96")  # RFC 6052 well-known prefix (DNS64/NAT64 networks)
+
+
 def _ip_is_public(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    # On IPv6-only networks with DNS64, public IPv4 hosts resolve to 64:ff9b::<ipv4>. Judge the
+    # embedded IPv4 address, so a private IPv4 hidden behind NAT64 is still blocked.
+    if isinstance(ip, ipaddress.IPv6Address) and ip in NAT64_PREFIX:
+        return _ip_is_public(ipaddress.IPv4Address(int(ip) & 0xFFFFFFFF))
     return not (
         ip.is_private
         or ip.is_loopback
@@ -221,6 +228,33 @@ class SafeHttp:
         )
         if res.status_code >= 400:
             raise FetchError(f"HTTP {res.status_code} from {res.url}")
+        return res
+
+    def post_form(self, url: str, data: dict[str, str], *, headers=None) -> FetchResult:
+        """POST a form to a public search endpoint (no redirects followed).
+
+        Same SSRF, robots.txt, rate-limit and size guarantees as `get`. Only for read-only public
+        search APIs (e.g. GeM bid listing) — never for submitting bids, registrations or messages.
+        """
+        validate_url(url, resolver=self.resolver, allow_private=self.allow_private)
+        if self.respect_robots and not self._robots_allows(url):
+            raise RobotsDisallowedError(f"robots.txt disallows {url}")
+        _rate_limiter.wait(urlsplit(url).hostname or "", self.rate_limit)
+        self.requests_made += 1
+        try:
+            with self.client.stream("POST", url, data=data, headers=headers) as resp:
+                buf = bytearray()
+                for chunk in resp.iter_bytes():
+                    buf.extend(chunk)
+                    if len(buf) > self.max_bytes:
+                        raise FetchError(f"Response exceeded {self.max_bytes} bytes")
+                res = FetchResult(url=url, status_code=resp.status_code, content_type=resp.headers.get("content-type", ""), content=bytes(buf))
+        except httpx.TimeoutException as exc:
+            raise FetchError(f"Timeout posting to {url}") from exc
+        except httpx.HTTPError as exc:
+            raise FetchError(f"HTTP error posting to {url}: {exc}") from exc
+        if res.status_code >= 400:
+            raise FetchError(f"HTTP {res.status_code} from {url}")
         return res
 
     def close(self) -> None:

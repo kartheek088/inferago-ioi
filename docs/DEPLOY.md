@@ -22,6 +22,28 @@ Works only while the phone is on the same Wi-Fi. Traffic is plain HTTP inside yo
 so avoid this on shared/public Wi-Fi. The laptop's IP can change after a router restart — just
 re-run `device-link.sh`.
 
+## Public link (Cloudflare Tunnel) — open it from any browser, anywhere
+
+No sudo, no router changes, no account needed for the quick mode.
+
+```bash
+scripts/install-service.sh      # if not already running
+scripts/public-tunnel.sh        # installs cloudflared (SHA256-verified), starts the ioi-tunnel user service, prints link + QR
+scripts/public-tunnel.sh link   # print the current link again
+scripts/public-tunnel.sh stop   # take it offline
+```
+
+- Address looks like `https://<random-words>.trycloudflare.com`. It changes whenever the tunnel
+  restarts (reboot, Wi-Fi change), so run `scripts/public-tunnel.sh link` to get the current one.
+- The link includes `#token=…`. The fragment is never sent over the network; the app stores it in the browser. Anyone with the
+  link has full access, so keep it private. Revoke by changing `IOI_API_TOKEN` and restarting.
+- Every request through the tunnel needs the token (proxied requests are never treated as local).
+- The laptop must be on and online. For 24/7 access use Option B (VPS).
+- Permanent address: with a Cloudflare account and a domain, run `cloudflared tunnel login`,
+  `cloudflared tunnel create ioi`, `cloudflared tunnel route dns ioi ioi.<yourdomain>`, then change
+  `ExecStart` in `~/.config/systemd/user/ioi-tunnel.service` to
+  `cloudflared tunnel run --url http://127.0.0.1:8000 ioi`.
+
 ## Option A — phone + laptop anywhere via Tailscale
 
 Tailscale gives a private network between your own devices; nothing is exposed to the internet.

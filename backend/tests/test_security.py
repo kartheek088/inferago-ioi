@@ -32,6 +32,14 @@ def test_validate_url_blocks_unsafe(url):
         validate_url(url, resolver=public, allow_private=False)
 
 
+def test_validate_url_nat64_judges_embedded_ipv4():
+    # DNS64 maps public IPv4 hosts into 64:ff9b::/96 — allowed; a private IPv4 behind it stays blocked.
+    assert validate_url("https://hn.example/", resolver=lambda h: ["64:ff9b::22a0:a8b5"], allow_private=False)
+    for bad in ("64:ff9b::a01:203", "64:ff9b::7f00:1", "64:ff9b::a9fe:a9fe"):  # 10.1.2.3, 127.0.0.1, 169.254.169.254
+        with pytest.raises(BlockedURLError):
+            validate_url("https://evil.example/", resolver=lambda h, b=bad: [b], allow_private=False)
+
+
 def test_validate_url_blocks_dns_to_private():
     with pytest.raises(BlockedURLError, match="non-public"):
         validate_url("https://evil.example/", resolver=lambda h: ["10.1.2.3"], allow_private=False)

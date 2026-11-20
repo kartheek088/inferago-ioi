@@ -43,6 +43,24 @@ schedule state, coverage and **connector status**. Seeding never overwrites owne
 - Good candidates (check each site's terms first): Discourse forums such as community.n8n.io
   (`/latest.rss`), company procurement news feeds, government tender RSS feeds where offered.
 
+### GeM public bid listing (`gem`) — disabled until the owner enables it
+
+- Endpoint: the public page https://bidplus.gem.gov.in/all-bids and the search endpoint it calls
+  (`all-bids-data`, using the CSRF token the page itself publishes). No login, no CAPTCHA; robots.txt
+  allows these paths. Read-only: IOI never logs in, bids or registers.
+- Per run: one page load, `pages_per_term` searches per term (10 bids each), up to `max_documents`
+  bid PDFs (`/showbidDocument/<id>`), at 12 requests/minute.
+- Keeps only service bids that match approved services (software development, web/portal, API,
+  integration, automation, ERP/MIS, IT projects). Skips goods/licences/hardware and reverse auctions.
+- Bid PDF (bilingual) → Hindi lines dropped → labelled fields with page references: bid end date,
+  ministry/department/organisation/office, item category, turnover, experience, MSE/startup relaxation,
+  EMD, estimated value, documents required, buyer email (published in the document).
+- Eligibility uses only these structured fields (GeM PDFs carry generic policy boilerplate that would
+  otherwise create false requirements) plus the portal rule "must be registered on GeM as a seller".
+- Already-ingested bids are remembered in the source cursor, so their PDFs are not downloaded again.
+- Verified manually on 2026-11-20 (one search, one bid PDF); unit-tested with mocked responses.
+  If GeM changes the page, the run fails with "CSRF token not found" and nothing is ingested.
+
 ## Manual
 
 - **Manual URL import** (`/api/imports/url`, Discover page): fetches one public page through the
@@ -51,7 +69,7 @@ schedule state, coverage and **connector status**. Seeding never overwrites owne
   Extracts title, buyer, publication date, deadline, scope, budget, EMD, turnover, experience,
   GST, legal-entity, consortium, subcontracting and contact clauses with page references.
   Scanned PDFs (little text) are flagged `needs_manual_review`. Missing clauses stay empty.
-  Use this for **TN e-Procurement, CPPP, GeM, GePNIC, PSU** tenders downloaded by hand.
+  Use this for **TN e-Procurement, CPPP, GePNIC, PSU** tenders downloaded by hand (GeM also has a connector).
   (Checked Nov 2026: the CPPP and tntenders.gov.in "Latest Active Tenders" listings themselves
   require a CAPTCHA, so they cannot be collected automatically without bypassing it.)
 - **Official company websites**: visited only by the research workflow (homepage, one contact
@@ -71,7 +89,7 @@ Uses app-only OAuth and public listings; no HTML scraping. The OAuth path is imp
 ## Planned (no connector)
 
 Discord (authorised bot only — never private channels/messages/member lists), Indie Hackers,
-Product Hunt, TN e-Procurement / CPPP / GeM / GePNIC / PSU portals
+Product Hunt, TN e-Procurement / CPPP / GePNIC / PSU portals
 (CAPTCHA-protected — manual document import instead), international procurement portals,
 vendor portals, SI/ERP/CRM partner directories, corporate procurement pages, industry/
 manufacturer/exhibitor directories, chambers of commerce. LinkedIn and freelance marketplaces are

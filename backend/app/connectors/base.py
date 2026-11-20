@@ -28,6 +28,8 @@ class CollectedItem:
     # Public, poster-published contact routes: (contact_type, value, source_url, verified, method)
     contact_routes: list[tuple[str, str, str, bool, str]] = field(default_factory=list)
     needs_manual_review: bool = False
+    deadline: datetime | None = None
+    budget_text: str | None = None
 
 
 @dataclass

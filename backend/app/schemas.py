@@ -486,6 +486,8 @@ class SettingsUpdate(BaseModel):
     country_priorities: list[dict[str, Any]] | None = None
     research_budget: dict[str, Any] | None = None
     profile_overrides: dict[str, Any] | None = None
+    ai_classification_refinement: bool | None = None
+    ai_document_extraction: bool | None = None
 
 
 class ActionOut(ORM):

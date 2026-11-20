@@ -6,7 +6,7 @@ _Last updated: 2026-11-20_
 
 | Check | Result |
 |---|---|
-| Backend tests `uv run pytest` | **110 passed** (unit, API integration, mocked connectors, dedupe, eligibility hard gates, score arithmetic, source failures, missing evidence, relationship provenance, outreach approval, migrations, SSRF/auth, documents, AI fallback, end-to-end) |
+| Backend tests `uv run pytest` | **121 passed** (unit, GeM connector (mocked), AI quote verification, API integration, mocked connectors, dedupe, eligibility hard gates, score arithmetic, source failures, missing evidence, relationship provenance, outreach approval, migrations, SSRF/auth, documents, AI fallback, end-to-end) |
 | Alembic `upgrade head` + `alembic check` | Pass — no drift between models and migration |
 | Migration upgrade → downgrade → upgrade | Pass (test) |
 | Frontend `tsc` type check | Pass |
@@ -21,7 +21,10 @@ _Last updated: 2026-11-20_
 ## Implemented
 
 - Monorepo, config via env, SQLite + SQLAlchemy 2 + Alembic (21 tables, indexes, FKs, unique and check constraints).
-- Source registry with honest statuses (23 sources: 4 live, 3 manual, 1 credential-gated, 15 planned); enable/schedule/config from UI; per-source health, failure counts, run logs.
+- Source registry with honest statuses (23 sources: 5 live, 3 manual, 1 credential-gated, 14 planned); enable/schedule/config from UI; per-source health, failure counts, run logs.
+- Live GeM public bid connector (read-only; service bids only; bid PDF parsed to labelled fields with page refs; structured eligibility incl. MSE/startup relaxation). Disabled by default.
+- AI extraction with verbatim-quote verification: document field filling, requirement-clause location (rules still classify/evaluate), classification refinement for uncertain items (≤10 calls/run). Toggles in Settings.
+- Public HTTPS link via Cloudflare quick tunnel (`scripts/public-tunnel.sh`).
 - Live Hacker News connector (freelancer thread buyers, contract roles, incremental keyword search).
 - Generic RSS/Atom connector (term and title filters); owner can add feeds at runtime. Live n8n Jobs and Make Hire-a-Pro feeds.
 - Manual URL import and procurement document import (PDF/DOCX) with page-referenced field extraction and scanned-PDF manual-review flag.
@@ -46,14 +49,15 @@ _Last updated: 2026-11-20_
 ## Partially implemented
 
 - **Reddit connector** — OAuth app-only flow and listing parser implemented; disabled without credentials. Not tested against live Reddit (no credentials available); unit-tested only for the disabled path.
-- **AI features** — adapter and fallbacks are unit-tested with a mocked OpenRouter and verified once live (openrouter/auto, one summary call). AI is used for research briefs, document summaries and outreach drafts; AI classification refinement and AI requirement extraction are not wired in (rules only).
+- **AI features** — used for research briefs, document summaries, outreach drafts, document field extraction, requirement-clause location and classification refinement. Every AI value must match a verbatim quote in the source or it is discarded; eligibility outcomes remain rule-decided. Verification logic is unit-tested with a fake client; the new extraction prompts have not yet been exercised against the live model.
+- **GeM connector** — verified manually once against the live site (search + one bid PDF); a full automated run has not been executed yet. Label parsing is tuned on one bid layout; other layouts may leave fields empty (never invented).
 - **Relationship discovery** — regex-based extraction from posts/pages produces hypotheses; precision is modest; human confirmation is the intended workflow.
 - **Organisation enrichment** — website only when present in the post; Hacker News posts often link to job boards (filtered as platforms), so many organisations have no website and research falls back to "public thread is the only contact route".
 - **Document field extraction** — regex-based; works on conventionally labelled Indian tender documents; unusual layouts will leave fields empty (never fabricated).
 
 ## Blocked / not implemented (by design or environment)
 
-- Government portals (TN e-Procurement, CPPP, GeM, GePNIC, PSU): CAPTCHA/login-protected (CPPP and TN listings verified CAPTCHA-gated, Nov 2026) — no automated connector; manual document import instead.
+- Government portals (TN e-Procurement, CPPP, GePNIC, PSU): CAPTCHA/login-protected (CPPP and TN listings verified CAPTCHA-gated, Nov 2026) — no automated connector; manual document import instead.
 - Discord, Indie Hackers, Product Hunt, n8n/Make (beyond generic RSS), directories, chambers of commerce: planned only.
 - LinkedIn and freelance marketplaces: intentionally not automated.
 - Automatic sending/calling/bidding/registration: intentionally not implemented.

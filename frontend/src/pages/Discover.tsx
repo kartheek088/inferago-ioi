@@ -8,7 +8,7 @@ interface ImportResult {
   status: string;
   opportunity_id: number | null;
   reason: string | null;
-  document?: { file_name: string; pages: number; needs_manual_review: boolean; review_reason: string | null; fields: Record<string, { value: string; page_reference: string | null } | null> };
+  document?: { file_name: string; pages: number; needs_manual_review: boolean; review_reason: string | null; fields: Record<string, { value: string; page_reference: string | null; method?: string } | null> };
 }
 
 export default function Discover() {
@@ -132,7 +132,7 @@ export default function Discover() {
                   {Object.entries(result.document.fields).map(([k, v]) => (
                     <tr key={k}>
                       <td className="small">{k.replace(/_/g, " ")}</td>
-                      <td className="wrap small">{v ? v.value : <span className="muted">Not found (not fabricated)</span>}</td>
+                      <td className="wrap small">{v ? <>{v.value}{v.method === "ai" && <span className="muted xs"> · AI-located, quote verified</span>}</> : <span className="muted">Not found (not fabricated)</span>}</td>
                       <td className="mono">{v?.page_reference ?? ""}</td>
                     </tr>
                   ))}
