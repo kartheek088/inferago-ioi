@@ -144,6 +144,8 @@ export function Tabs<T extends string>({ tabs, value, onChange }: { tabs: { id: 
 
 const ELIG_LABEL: Record<string, string> = {
   eligible: "Eligible",
+  eligible_with_clarifications: "Eligible (clarify)",
+  insufficient_information: "Insufficient info",
   potentially_eligible: "Potentially eligible",
   not_eligible: "Not eligible",
   partner_route: "Partner route",
@@ -152,6 +154,7 @@ const ELIG_LABEL: Record<string, string> = {
 };
 const ELIG_TONE: Record<string, string> = {
   eligible: "good",
+  eligible_with_clarifications: "info",
   potentially_eligible: "info",
   not_eligible: "bad",
   partner_route: "warn",

@@ -54,7 +54,8 @@ def get_settings_api(db: Session = DB):
         **all_settings(db),
         "runtime": {
             "ai_enabled": s.ai_enabled,
-            "ai_model": s.openrouter_model if s.ai_enabled else None,
+            "ai_model": s.ai_model_name,
+            "ai_provider": ("claude" if s.claude_enabled else "openrouter") if s.ai_enabled else None,
             "reddit_configured": s.reddit_configured,
             "scheduler": jobs.scheduler_state(),
             "auth_mode": "token" if s.api_token else "loopback-only",

@@ -66,6 +66,22 @@ scripts/device-link.sh         # prints a one-time link + QR code per device
 - Revoke access: change `IOI_API_TOKEN` in `.env`, `systemctl --user restart ioi`, re-run `device-link.sh`.
 - Stop sharing: `tailscale serve reset`.
 
+## Where to host the always-on agent (recommendation)
+
+The laptop setup works only while the laptop is on. For discovery + Claude reviews running 24/7:
+
+- **Use a small Linux VM in an Indian region** (Mumbai/Hyderabad/Bengaluru). GeM and other Indian
+  government sites are the main targets and an Indian IP avoids any geo-filtering surprises; latency to
+  Claude's API is not a concern. 1 vCPU / 1–2 GB RAM / 20 GB disk is enough (SQLite, a few jobs/day).
+  - Free: Oracle Cloud "Always Free" (Mumbai or Hyderabad region, ARM VM).
+  - Paid, simplest: DigitalOcean Bengaluru, AWS Lightsail Mumbai, or a Hostinger/E2E Networks India VPS.
+- Follow Option B below, set `IOI_SCHEDULER_ENABLED=true`, enable the sources you want, and put
+  `IOI_ANTHROPIC_API_KEY` in the server's `.env`.
+- Access: either Caddy + your own domain (Option B), or run `scripts/public-tunnel.sh` on the server
+  for a token-protected `trycloudflare.com` link without a domain.
+- Copy your existing data once: `scp backend/data/ioi.db server:inferago-ioi/backend/data/` (stop the
+  service first on both sides).
+
 ## Option B — always-on server (VPS)
 
 Suitable when you want scheduled discovery 24/7 without the laptop. Any small Linux VM

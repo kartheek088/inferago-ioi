@@ -70,12 +70,18 @@ class AIRelationshipExplanation(BaseModel):
 class OpenRouterClient:
     def __init__(self, db: Session, client: httpx.Client | None = None) -> None:
         self.s = get_settings()
-        if not self.s.ai_enabled:
+        if not (self.s.openrouter_api_key and self.s.openrouter_model):
             raise AIUnavailable("AI disabled: set IOI_OPENROUTER_API_KEY and IOI_OPENROUTER_MODEL")
         self.db = db
         self.client = client or httpx.Client(timeout=self.s.openrouter_timeout_seconds)
         self.calls = 0
         self.tokens = 0
+
+    provider = "openrouter"
+
+    @property
+    def model_name(self) -> str:
+        return self.s.openrouter_model or ""
 
     def complete_json(self, task: str, instruction: str, data: str, schema: type[T], *, max_tokens: int = 800) -> T:
         payload = {
@@ -133,7 +139,12 @@ class OpenRouterClient:
         self.db.flush()
 
 
-def get_ai(db: Session) -> OpenRouterClient | None:
+def get_ai(db: Session):
+    """Claude when IOI_ANTHROPIC_API_KEY is set, else OpenRouter when configured, else None."""
+    if get_settings().claude_enabled:
+        from app.ai.claude import ClaudeClient
+
+        return ClaudeClient(db)
     try:
         return OpenRouterClient(db)
     except AIUnavailable:

@@ -8,7 +8,7 @@ import {
 import type { Assessment, Contact, Draft, Evidence, Opportunity, OrgRelationship, Page, Requirement, ResearchTask } from "../types";
 import { STATUSES } from "./Opportunities";
 
-type Tab = "overview" | "evidence" | "eligibility" | "scores" | "research" | "contacts" | "chains" | "outreach";
+type Tab = "overview" | "claude" | "evidence" | "eligibility" | "scores" | "research" | "contacts" | "chains" | "outreach";
 
 const REQ_KEYS = [
   "country_restriction", "india_providers_accepted", "legal_entity", "proprietorship_acceptance", "gst", "pan", "udyam_msme",
@@ -63,12 +63,13 @@ export default function OpportunityDetail() {
             value={tab}
             onChange={setTab}
             tabs={[
-              { id: "overview", label: "Overview" }, { id: "evidence", label: "Evidence" }, { id: "eligibility", label: "Eligibility" },
+              { id: "overview", label: "Overview" }, { id: "claude", label: "Claude review" }, { id: "evidence", label: "Evidence" }, { id: "eligibility", label: "Eligibility" },
               { id: "scores", label: "Scores" }, { id: "research", label: "Research" }, { id: "contacts", label: "Contacts" },
               { id: "chains", label: "Relationships" }, { id: "outreach", label: "Outreach" },
             ]}
           />
           {tab === "overview" && <OverviewTab o={o} />}
+          {tab === "claude" && <ClaudeTab oid={oid} onChange={opp.reload} />}
           {tab === "evidence" && <EvidenceTab oid={oid} />}
           {tab === "eligibility" && <EligibilityTab oid={oid} onChange={opp.reload} />}
           {tab === "scores" && (
@@ -219,6 +220,64 @@ function ReqList({ title, items, tone }: { title: string; items: { key: string; 
         ))}
       </ul>
     </div>
+  );
+}
+
+interface AIReview {
+  id: number; status: string; trigger: string; model: string | null; verdict: string | null; opportunity_open: string | null;
+  rule_outcome: string | null; agrees_with_rules: boolean | null; summary: string | null; next_step: string | null;
+  requirement_reviews: { requirement: string; mandatory: boolean; met: string; reason: string; source_quote: string | null; source_url: string | null; quote_verified: boolean }[];
+  facts: { kind: string; value: string; quote: string; source: string }[];
+  open_questions: string[]; sources: string[]; actions: string[]; turns: number; tokens: number; error: string | null; created_at: string;
+}
+
+function ClaudeTab({ oid, onChange }: { oid: number; onChange: () => void }) {
+  const reviews = useApi(() => api.get<AIReview[]>(`/opportunities/${oid}/ai-reviews`), [oid]);
+  const act = useAction();
+  const start = async () => {
+    if (await act.run(() => api.post(`/opportunities/${oid}/ai-review`, undefined, { wait: true }), "Review finished")) { reviews.reload(); onChange(); }
+  };
+  const r = reviews.data?.[0];
+  return (
+    <Card title="Claude review — retrieve, verify, check eligibility" actions={<button className="btn primary" disabled={act.busy} onClick={start}>{act.busy ? "Claude is reviewing… (1–3 min)" : r ? "Review again" : "Review with Claude"}</button>}>
+      <Msg msg={act.msg} />
+      <div className="muted small">Claude reads the opportunity and the source pages (robots.txt respected), records only facts it can quote exactly, and gives an eligibility opinion. The rule engine stays authoritative for mandatory conditions; disagreements are flagged for you.</div>
+      {!reviews.data ? <Loading /> : !r ? <Empty>Not reviewed yet</Empty> : (
+        <div className="stack" style={{ marginTop: 14 }}>
+          <div className="row gap-s small"><StatusBadge status={r.status} /><span className="muted">#{r.id} · {fmtDate(r.created_at, true)} · {r.model} · {r.turns} turns · {r.tokens.toLocaleString()} tokens · {r.trigger}</span></div>
+          {r.error && <div className="alert err">{r.error}</div>}
+          {r.verdict && (
+            <dl className="kv">
+              <dt>Claude's verdict</dt><dd><EligibilityBadge outcome={r.verdict} /></dd>
+              <dt>Rule engine</dt><dd><EligibilityBadge outcome={r.rule_outcome} /> {r.agrees_with_rules === false && <span className="alert warn small">Disagreement — review manually (rules stay authoritative)</span>}{r.agrees_with_rules === true && <span className="muted small"> agrees</span>}</dd>
+              <dt>Still open?</dt><dd>{r.opportunity_open}</dd>
+              <dt>Summary</dt><dd className="wrap">{r.summary}</dd>
+              <dt>Next step</dt><dd className="wrap">{r.next_step}</dd>
+            </dl>
+          )}
+          {r.requirement_reviews.length > 0 && (
+            <table>
+              <thead><tr><th>Requirement</th><th>Met?</th><th>Reason</th><th>Source</th></tr></thead>
+              <tbody>{r.requirement_reviews.map((q, i) => (
+                <tr key={i}>
+                  <td className="small">{q.requirement}{q.mandatory && <span className="muted xs"> · mandatory</span>}</td>
+                  <td className="small">{q.met}</td>
+                  <td className="wrap small">{q.reason}</td>
+                  <td className="wrap xs">{q.source_quote ? <>“{q.source_quote}” <span className={q.quote_verified ? "muted" : "alert warn"}>{q.quote_verified ? "✓ verified" : "unverified quote"}</span></> : <span className="muted">—</span>}</td>
+                </tr>
+              ))}</tbody>
+            </table>
+          )}
+          {r.facts.length > 0 && (
+            <div><strong className="small">Verified facts</strong>
+              <ul className="small">{r.facts.map((f, i) => <li key={i}><b>{f.kind}</b>: {f.value} <span className="muted xs">— “{f.quote}” ({f.source.startsWith("http") ? <ExtLink href={f.source}>source</ExtLink> : f.source})</span></li>)}</ul>
+            </div>
+          )}
+          {r.open_questions.length > 0 && <div><strong className="small">Questions for the buyer</strong><ul className="small">{r.open_questions.map((q, i) => <li key={i}>{q}</li>)}</ul></div>}
+          {(r.actions.length > 0 || r.sources.length > 0) && <div className="muted xs">Actions: {r.actions.join("; ") || "none"}</div>}
+        </div>
+      )}
+    </Card>
   );
 }
 

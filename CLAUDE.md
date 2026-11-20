@@ -26,8 +26,10 @@ cd frontend && npm run typecheck && npm run build
 - **Relationships need evidence** (URL + excerpt). Rule-extracted ones are hypotheses until a
   human confirms. Hypotheses never add score.
 - **Human approval for all outbound.** Nothing is sent, called, bid or registered automatically.
-- **AI is optional** (`IOI_OPENROUTER_*`). Every AI path has a deterministic fallback, output is
-  Pydantic-validated, and AI never decides mandatory legal eligibility.
+- **AI is optional** (`IOI_ANTHROPIC_*` preferred, else `IOI_OPENROUTER_*`). Every AI path has a
+  deterministic fallback and Pydantic-validated output. AI facts/clauses are kept only with a verbatim
+  quote found in the source. The Claude review agent gives an eligibility *opinion*; the rule engine
+  stays authoritative for mandatory gates and disagreements are flagged for the owner.
 - **Compliance:** robots.txt, rate limits, no CAPTCHA/paywall bypass, no private channels,
   no LinkedIn/marketplace scraping. All outbound HTTP goes through `app/http_client.SafeHttp`.
 - **Do not mark sources live unless a working, tested connector exists.**
@@ -39,7 +41,7 @@ cd frontend && npm run typecheck && npm run build
 |---|---|
 | `models.py`, `enums.py`, `db.py` | ORM schema, vocabularies, engine/session |
 | `connectors/` | Source connectors (hackernews, rss, reddit, gem) — yield `CollectedItem` |
-| `ai/` | OpenRouter adapter; `extraction.py` = AI locate-and-verify helpers (quotes must match source) |
+| `ai/` | `claude.py` (Anthropic SDK provider), `openrouter.py`, `extraction.py` (locate-and-verify), `agent.py` (Claude review agent: tool runner over fetch/record/add-requirement tools) |
 | `pipeline.py` | ingest → dedupe → org resolution → evidence → requirements → evaluate; source runs |
 | `classification.py` | deterministic category/service/signal/geography rules |
 | `eligibility.py` | requirement extraction + deterministic evaluation against profile |

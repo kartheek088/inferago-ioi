@@ -41,6 +41,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     # Optional AI (only when IOI_OPENROUTER_* is set). AI locates evidence; rules decide eligibility.
     "ai_classification_refinement": True,
     "ai_document_extraction": True,
+    # Claude review agent (needs IOI_ANTHROPIC_API_KEY): reviews this many top new opportunities after each discovery run.
+    "ai_auto_review_top_n": 3,
 }
 
 

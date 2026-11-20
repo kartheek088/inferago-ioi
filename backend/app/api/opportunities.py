@@ -8,12 +8,14 @@ from sqlalchemy.orm import Session, selectinload
 from app import jobs
 from app.api.deps import DB, Paging, actor, paginate
 from app.classification import classify
+from app.config import get_settings
 from app.db import utcnow
 from app.enums import EligibilityScope, OpportunityStatus
 from app.evaluation import evaluate_opportunity, run_scoring
 from app.models import (
     BuyingSignal,
     Contact,
+    AIReview,
     EligibilityAssessment,
     EligibilityRequirement,
     Evidence,
@@ -30,6 +32,7 @@ from app.pipeline import _apply_classification
 from app.relationships import set_verification
 from app.research import research_opportunity, run_research_batch
 from app.schemas import (
+    AIReviewOut,
     AssessmentOut,
     BuyingSignalOut,
     ContactIn,
@@ -270,6 +273,36 @@ def latest_eligibility(opp_id: int, db: Session = DB):
     for scope in EligibilityScope:
         out[scope.value] = db.scalar(select(EligibilityAssessment).where(EligibilityAssessment.opportunity_id == opp_id, EligibilityAssessment.scope == scope.value).order_by(EligibilityAssessment.id.desc()).limit(1))
     return out
+
+
+@router.post("/opportunities/{opp_id}/ai-review", response_model=AIReviewOut | None, status_code=202, tags=["ai"])
+def start_ai_review(opp_id: int, wait: bool = False, db: Session = DB, who: str = Depends(actor)):
+    """Claude retrieves sources, verifies facts and checks eligibility (advisory; rules stay authoritative)."""
+    opp = _opp_or_404(db, opp_id)
+    if not get_settings().claude_enabled:
+        raise HTTPException(400, "Claude is not configured: set IOI_ANTHROPIC_API_KEY in .env and restart")
+    log_activity(db, "opportunity", opp_id, "ai_review_requested", {}, who)
+    db.commit()
+    if wait:
+        from app.ai.agent import run_review
+
+        return run_review(db, opp)
+    jobs.submit_review(opp_id)
+    return None
+
+
+@router.get("/opportunities/{opp_id}/ai-reviews", response_model=list[AIReviewOut], tags=["ai"])
+def list_ai_reviews(opp_id: int, db: Session = DB):
+    _opp_or_404(db, opp_id)
+    return db.scalars(select(AIReview).where(AIReview.opportunity_id == opp_id).order_by(AIReview.id.desc()).limit(20)).all()
+
+
+@router.post("/ai-reviews/batch", status_code=202, tags=["ai"])
+def ai_review_batch(limit: int = Query(5, ge=1, le=50)):
+    if not get_settings().claude_enabled:
+        raise HTTPException(400, "Claude is not configured: set IOI_ANTHROPIC_API_KEY in .env and restart")
+    jobs.submit_review_batch(limit)
+    return {"queued": limit}
 
 
 @router.get("/eligibility", response_model=Page[AssessmentOut], tags=["eligibility"])

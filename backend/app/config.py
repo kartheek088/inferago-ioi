@@ -46,6 +46,12 @@ class Settings(BaseSettings):
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
     openrouter_timeout_seconds: float = 60.0
     openrouter_max_retries: int = 2
+    # Claude (Anthropic API). When a key is set, Claude is used for every AI task instead of OpenRouter.
+    anthropic_api_key: str | None = None
+    anthropic_model: str = "claude-opus-5-5"
+    anthropic_effort: str = "medium"  # low | medium | high | xhigh | max
+    agent_max_fetches: int = 6  # pages the review agent may fetch per opportunity
+    agent_max_iterations: int = 14  # model turns per review
 
     # Reddit is credential-gated. Without these the adapter stays disabled.
     reddit_client_id: str | None = None
@@ -54,7 +60,17 @@ class Settings(BaseSettings):
 
     @property
     def ai_enabled(self) -> bool:
-        return bool(self.openrouter_api_key and self.openrouter_model)
+        return self.claude_enabled or bool(self.openrouter_api_key and self.openrouter_model)
+
+    @property
+    def claude_enabled(self) -> bool:
+        return bool(self.anthropic_api_key)
+
+    @property
+    def ai_model_name(self) -> str | None:
+        if self.claude_enabled:
+            return self.anthropic_model
+        return self.openrouter_model if self.ai_enabled else None
 
     @property
     def reddit_configured(self) -> bool:

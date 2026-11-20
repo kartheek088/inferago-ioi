@@ -169,12 +169,10 @@ def test_gem_csrf_missing_fails_cleanly(db, web, monkeypatch):
 class FakeAI:
     """Stands in for OpenRouterClient: returns a canned schema instance per task."""
 
-    class _S:
-        openrouter_model = "fake/model"
+    model_name = "fake/model"
 
     def __init__(self, responses):
         self.responses = responses
-        self.s = self._S()
         self.calls = 0
 
     def complete_json(self, task, instruction, data, schema, max_tokens=800):

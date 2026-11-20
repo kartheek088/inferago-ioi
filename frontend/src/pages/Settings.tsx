@@ -9,7 +9,8 @@ interface SettingsData {
   profile_overrides: Record<string, unknown>;
   ai_classification_refinement: boolean;
   ai_document_extraction: boolean;
-  runtime: { ai_enabled: boolean; ai_model: string | null; reddit_configured: boolean; scheduler: { enabled: boolean; jobs: { id: string; next_run: string | null }[] }; auth_mode: string };
+  ai_auto_review_top_n: number;
+  runtime: { ai_enabled: boolean; ai_model: string | null; ai_provider?: string | null; reddit_configured: boolean; scheduler: { enabled: boolean; jobs: { id: string; next_run: string | null }[] }; auth_mode: string };
 }
 
 export default function SettingsPage() {
@@ -23,6 +24,7 @@ export default function SettingsPage() {
   const [overrides, setOverrides] = useState("");
   const [aiRefine, setAiRefine] = useState(true);
   const [aiDocs, setAiDocs] = useState(true);
+  const [autoReview, setAutoReview] = useState(3);
   const [token, setTok] = useState(getToken());
   const [actor, setAct] = useState(getActor());
 
@@ -34,6 +36,7 @@ export default function SettingsPage() {
     setOverrides(JSON.stringify(s.data.profile_overrides, null, 2));
     setAiRefine(s.data.ai_classification_refinement !== false);
     setAiDocs(s.data.ai_document_extraction !== false);
+    setAutoReview(s.data.ai_auto_review_top_n ?? 3);
   }, [s.data]);
 
   const save = async () => {
@@ -46,6 +49,7 @@ export default function SettingsPage() {
         profile_overrides: JSON.parse(overrides || "{}"),
         ai_classification_refinement: aiRefine,
         ai_document_extraction: aiDocs,
+        ai_auto_review_top_n: autoReview,
       };
     } catch {
       act.setMsg({ kind: "err", text: "Country priorities, research budget and profile overrides must be valid JSON." });
@@ -71,7 +75,7 @@ export default function SettingsPage() {
           <Card title="Runtime (from server environment)">
             <dl className="kv">
               <dt>Access control</dt><dd>{s.data.runtime.auth_mode === "token" ? "Bearer token required" : "Loopback-only (no token configured)"}</dd>
-              <dt>AI (OpenRouter)</dt><dd>{s.data.runtime.ai_enabled ? `Enabled · ${s.data.runtime.ai_model}` : "Disabled — deterministic rules and templates are used (set IOI_OPENROUTER_API_KEY and IOI_OPENROUTER_MODEL to enable)"}</dd>
+              <dt>AI (OpenRouter)</dt><dd>{s.data.runtime.ai_enabled ? `Enabled · ${s.data.runtime.ai_provider === "claude" ? "Claude" : "OpenRouter"} · ${s.data.runtime.ai_model}` : "Disabled — deterministic rules and templates are used (set IOI_OPENROUTER_API_KEY and IOI_OPENROUTER_MODEL to enable)"}</dd>
               <dt>Reddit API</dt><dd>{s.data.runtime.reddit_configured ? "Credentials configured" : "Not configured (adapter disabled)"}</dd>
               <dt>Scheduler</dt><dd>{s.data.runtime.scheduler.enabled ? `Running · ${s.data.runtime.scheduler.jobs.length} job(s)` : "Off (opt-in: IOI_SCHEDULER_ENABLED=true)"}{s.data.runtime.scheduler.jobs.map((j) => <div key={j.id} className="muted xs">{j.id} → next {j.next_run}</div>)}</dd>
             </dl>
@@ -80,6 +84,7 @@ export default function SettingsPage() {
             <div className="muted xs">AI only locates text; every value must match a verbatim quote from the source, and eligibility is still decided by the rules.</div>
             <label className="row gap"><input type="checkbox" checked={aiRefine} onChange={(e) => setAiRefine(e.target.checked)} /> Refine uncertain classifications during collection (max 10 AI calls per source run)</label>
             <label className="row gap"><input type="checkbox" checked={aiDocs} onChange={(e) => setAiDocs(e.target.checked)} /> Document import: fill fields the rules missed and locate requirement clauses</label>
+            <label className="row gap">Claude review agent: review the top <input type="number" min={0} max={50} style={{ width: 70 }} value={autoReview} onChange={(e) => setAutoReview(Number(e.target.value))} /> new opportunities after each discovery run (0 = off; needs IOI_ANTHROPIC_API_KEY)</label>
           </Card>
           <div className="grid grid-2">
             <Card title="Search terms">

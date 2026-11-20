@@ -505,6 +505,38 @@ class ActivityLog(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
 
 
+class AIReview(Base):
+    """Claude agent review of one opportunity: retrieved sources, verified facts, eligibility opinion.
+
+    Advisory: the rule engine's assessment stays authoritative for mandatory gates. `agrees_with_rules`
+    flags disagreements for human review.
+    """
+
+    __tablename__ = "ai_reviews"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    opportunity_id: Mapped[int] = mapped_column(ForeignKey("opportunities.id", ondelete="CASCADE"), index=True)
+    status: Mapped[str] = mapped_column(String(20), default="running")  # running|success|failed
+    trigger: Mapped[str] = mapped_column(String(20), default="manual")
+    model: Mapped[str | None] = mapped_column(String(200))
+    verdict: Mapped[str | None] = mapped_column(String(40))
+    opportunity_open: Mapped[str | None] = mapped_column(String(10))
+    rule_outcome: Mapped[str | None] = mapped_column(String(30))
+    agrees_with_rules: Mapped[bool | None] = mapped_column(Boolean)
+    summary: Mapped[str | None] = mapped_column(Text)
+    next_step: Mapped[str | None] = mapped_column(Text)
+    requirement_reviews: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    facts: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    open_questions: Mapped[list[str]] = mapped_column(JSON, default=list)
+    sources: Mapped[list[str]] = mapped_column(JSON, default=list)
+    actions: Mapped[list[str]] = mapped_column(JSON, default=list)
+    turns: Mapped[int] = mapped_column(Integer, default=0)
+    tokens: Mapped[int] = mapped_column(Integer, default=0)
+    error: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+
 class AIUsageLog(Base):
     __tablename__ = "ai_usage_logs"
 

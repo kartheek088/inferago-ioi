@@ -488,6 +488,31 @@ class SettingsUpdate(BaseModel):
     profile_overrides: dict[str, Any] | None = None
     ai_classification_refinement: bool | None = None
     ai_document_extraction: bool | None = None
+    ai_auto_review_top_n: int | None = Field(None, ge=0, le=50)
+
+
+class AIReviewOut(ORM):
+    id: int
+    opportunity_id: int
+    status: str
+    trigger: str
+    model: str | None
+    verdict: str | None
+    opportunity_open: str | None
+    rule_outcome: str | None
+    agrees_with_rules: bool | None
+    summary: str | None
+    next_step: str | None
+    requirement_reviews: list[dict[str, Any]]
+    facts: list[dict[str, Any]]
+    open_questions: list[str]
+    sources: list[str]
+    actions: list[str]
+    turns: int
+    tokens: int
+    error: str | None
+    created_at: datetime
+    finished_at: datetime | None
 
 
 class ActionOut(ORM):

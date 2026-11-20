@@ -39,12 +39,61 @@ def _run_discovery(job_id: int) -> None:
             return
         try:
             run_discovery_job(db, job)
+            _auto_review(db)
         except Exception as exc:  # noqa: BLE001
             log.exception("Discovery job %s failed", job_id)
             db.rollback()
             job = db.get(DiscoveryJob, job_id)
             job.status, job.stats = "failed", {**(job.stats or {}), "error": str(exc)}
             db.commit()
+
+
+def _auto_review(db) -> None:
+    """After discovery, let Claude review the top new opportunities (setting ai_auto_review_top_n)."""
+    from app.ai.agent import review_candidates, run_review
+    from app.config import get_settings
+    from app.settings_store import get_setting
+
+    if not get_settings().claude_enabled:
+        return
+    for opp in review_candidates(db, int(get_setting(db, "ai_auto_review_top_n") or 0)):
+        try:
+            run_review(db, opp, trigger="auto")
+        except Exception:  # noqa: BLE001 - one failed review must not stop the rest
+            log.exception("AI review of opportunity %s failed", opp.id)
+            db.rollback()
+
+
+def _run_review(opp_id: int) -> None:
+    from app.ai.agent import run_review
+    from app.models import Opportunity
+
+    with SessionLocal() as db:
+        opp = db.get(Opportunity, opp_id)
+        if opp:
+            try:
+                run_review(db, opp)
+            except Exception:  # noqa: BLE001
+                log.exception("AI review of opportunity %s failed", opp_id)
+
+
+def submit_review(opp_id: int) -> None:
+    executor().submit(_run_review, opp_id)
+
+
+def submit_review_batch(limit: int) -> None:
+    def _batch() -> None:
+        from app.ai.agent import review_candidates, run_review
+
+        with SessionLocal() as db:
+            for opp in review_candidates(db, limit):
+                try:
+                    run_review(db, opp, trigger="batch")
+                except Exception:  # noqa: BLE001
+                    log.exception("AI review of opportunity %s failed", opp.id)
+                    db.rollback()
+
+    executor().submit(_batch)
 
 
 def submit_discovery(job_id: int, *, background: bool = True) -> None:

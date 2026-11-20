@@ -13,7 +13,7 @@ import re
 
 from pydantic import BaseModel, Field
 
-from app.ai.openrouter import AIUnavailable, OpenRouterClient
+from app.ai.openrouter import AIUnavailable, OpenRouterClient  # ClaudeClient has the same interface
 from app.classification import ClassificationResult
 from app.enums import CATEGORY_PIPELINE, Category
 from app.profile import SERVICE_KEYS
@@ -186,7 +186,7 @@ def ai_refine_classification(ai: OpenRouterClient, title: str | None, text: str,
         changed = True
     if changed:
         cls.method = "ai"
-        cls.evidence = cls.evidence + [f"AI refinement ({ai.s.openrouter_model}): {res.rationale[:300]} — quote: \"{res.evidence_quote[:200]}\""]
+        cls.evidence = cls.evidence + [f"AI refinement ({ai.model_name}): {res.rationale[:300]} — quote: \"{res.evidence_quote[:200]}\""]
     return changed
 
 
