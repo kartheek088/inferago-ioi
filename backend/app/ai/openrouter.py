@@ -129,6 +129,46 @@ class OpenRouterClient:
                 self._log(task, False, error=last_error)
         raise AIUnavailable(f"AI call failed for {task}: {last_error}")
 
+    def chat(self, task: str, messages: list[dict], *, tools: list[dict] | None = None, json_mode: bool = False, max_tokens: int = 4000) -> tuple[dict, str | None]:
+        """One chat-completions turn (optionally with function tools). Returns (assistant message, model used)."""
+        payload: dict = {"model": self.s.openrouter_model, "messages": messages, "max_tokens": max_tokens, "temperature": 0.2}
+        if tools:
+            payload["tools"] = tools
+        if json_mode:
+            payload["response_format"] = {"type": "json_object"}
+        headers = {"Authorization": f"Bearer {self.s.openrouter_api_key}", "X-Title": "Inferago IOI (internal)"}
+        last_error = "unknown"
+        for attempt in range(self.s.openrouter_max_retries + 1):
+            started = time.monotonic()
+            try:
+                res = self.client.post(f"{self.s.openrouter_base_url}/chat/completions", json=payload, headers=headers)
+            except httpx.HTTPError as exc:
+                last_error = f"{type(exc).__name__}: {exc}"
+                self._log(task, False, error=last_error)
+                continue
+            latency = int((time.monotonic() - started) * 1000)
+            if res.status_code in (429, 500, 502, 503, 504):
+                last_error = f"HTTP {res.status_code}"
+                self._log(task, False, latency=latency, error=last_error)
+                time.sleep(min(8, 2 ** attempt))
+                continue
+            if res.status_code >= 400:
+                self._log(task, False, latency=latency, error=f"HTTP {res.status_code}: {res.text[:200]}")
+                raise AIUnavailable(f"AI call failed for {task}: HTTP {res.status_code}: {res.text[:200]}")
+            try:
+                body = res.json()
+                msg = body["choices"][0]["message"]
+            except (ValueError, KeyError, IndexError) as exc:
+                last_error = f"Malformed response: {exc}"
+                self._log(task, False, latency=latency, error=last_error)
+                continue
+            usage = body.get("usage") or {}
+            self.calls += 1
+            self.tokens += int(usage.get("total_tokens") or 0)
+            self._log(task, True, usage, latency)
+            return msg, body.get("model")
+        raise AIUnavailable(f"AI call failed for {task}: {last_error}")
+
     def _log(self, task: str, ok: bool, usage: dict | None = None, latency: int | None = None, error: str | None = None) -> None:
         usage = usage or {}
         self.db.add(AIUsageLog(

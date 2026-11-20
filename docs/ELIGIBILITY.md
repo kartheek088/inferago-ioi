@@ -50,12 +50,13 @@ clarification questions, recommended next action. Project and vendor-registratio
 assessed and stored separately. `not_eligible` sets every score's effective total to 0 and
 blocks outreach drafting.
 
-## Claude review (advisory)
+## AI review (advisory)
 
-With `IOI_ANTHROPIC_API_KEY` set, the Claude review agent (`backend/app/ai/agent.py`) reads the
+With AI configured (OpenRouter, or Claude if `IOI_ANTHROPIC_API_KEY` is set), the review agent
+(`backend/app/ai/agent.py`) reads the
 opportunity and its source pages, records facts only with a verbatim quote, and may submit extra
 clauses — which go through `extract_requirements` and `evaluate_requirement` like any other text.
-It then gives its own verdict (`eligible`, `eligible_with_clarifications`, `partner_route`,
+The model then gives its own verdict (`eligible`, `eligible_with_clarifications`, `partner_route`,
 `not_eligible`, `insufficient_information`). That verdict is stored in `ai_reviews` next to the rule
 outcome; it never changes the rule outcome or the scores. When the two disagree, the review is marked
 `agrees_with_rules = false` and the opportunity is flagged `needs_manual_review`.

@@ -49,12 +49,12 @@ def _run_discovery(job_id: int) -> None:
 
 
 def _auto_review(db) -> None:
-    """After discovery, let Claude review the top new opportunities (setting ai_auto_review_top_n)."""
+    """After discovery, let the AI agent review the top new opportunities (setting ai_auto_review_top_n)."""
     from app.ai.agent import review_candidates, run_review
     from app.config import get_settings
     from app.settings_store import get_setting
 
-    if not get_settings().claude_enabled:
+    if not get_settings().ai_enabled:
         return
     for opp in review_candidates(db, int(get_setting(db, "ai_auto_review_top_n") or 0)):
         try:

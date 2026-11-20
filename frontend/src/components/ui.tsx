@@ -1,6 +1,6 @@
 import { ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { ApiError } from "../api";
+import { ApiError, setToken } from "../api";
 import type { Score } from "../types";
 
 // ---------------------------------------------------------------------------------------------
@@ -86,8 +86,20 @@ export function Loading() {
   return <div className="muted pad">Loading…</div>;
 }
 
+function TokenPrompt() {
+  const [tok, setTok] = useState("");
+  return (
+    <div className="alert warn">
+      <span>This device is not signed in. Open your private link (run <code>scripts/public-tunnel.sh link</code> on the laptop) or paste the API token:</span>
+      <input type="password" value={tok} onChange={(e) => setTok(e.target.value)} placeholder="API token" style={{ maxWidth: 260 }} />
+      <button className="btn sm primary" disabled={!tok.trim()} onClick={() => { setToken(tok.trim()); window.location.reload(); }}>Sign in</button>
+    </div>
+  );
+}
+
 export function ErrorBox({ error, onRetry }: { error?: string; onRetry?: () => void }) {
   if (!error) return null;
+  if (error.startsWith("401")) return <TokenPrompt />;
   return (
     <div className="alert err">
       <span>{error}</span>

@@ -277,10 +277,10 @@ def latest_eligibility(opp_id: int, db: Session = DB):
 
 @router.post("/opportunities/{opp_id}/ai-review", response_model=AIReviewOut | None, status_code=202, tags=["ai"])
 def start_ai_review(opp_id: int, wait: bool = False, db: Session = DB, who: str = Depends(actor)):
-    """Claude retrieves sources, verifies facts and checks eligibility (advisory; rules stay authoritative)."""
+    """The AI agent retrieves sources, verifies facts and checks eligibility (advisory; rules stay authoritative)."""
     opp = _opp_or_404(db, opp_id)
-    if not get_settings().claude_enabled:
-        raise HTTPException(400, "Claude is not configured: set IOI_ANTHROPIC_API_KEY in .env and restart")
+    if not get_settings().ai_enabled:
+        raise HTTPException(400, "AI is not configured: set IOI_OPENROUTER_API_KEY and IOI_OPENROUTER_MODEL in .env and restart")
     log_activity(db, "opportunity", opp_id, "ai_review_requested", {}, who)
     db.commit()
     if wait:
@@ -299,8 +299,8 @@ def list_ai_reviews(opp_id: int, db: Session = DB):
 
 @router.post("/ai-reviews/batch", status_code=202, tags=["ai"])
 def ai_review_batch(limit: int = Query(5, ge=1, le=50)):
-    if not get_settings().claude_enabled:
-        raise HTTPException(400, "Claude is not configured: set IOI_ANTHROPIC_API_KEY in .env and restart")
+    if not get_settings().ai_enabled:
+        raise HTTPException(400, "AI is not configured: set IOI_OPENROUTER_API_KEY and IOI_OPENROUTER_MODEL in .env and restart")
     jobs.submit_review_batch(limit)
     return {"queued": limit}
 

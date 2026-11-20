@@ -108,6 +108,23 @@ def test_token_required_when_configured(client, monkeypatch):
     assert client.get("/api/sources", headers={"Authorization": "Bearer s3cret-token"}).status_code == 200
 
 
+def test_direct_local_browser_needs_no_token(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    monkeypatch.setattr(get_settings(), "api_token", "s3cret-token")
+    with TestClient(app, client=("127.0.0.1", 50000)) as local:
+        assert local.get("/api/sources").status_code == 200  # laptop's own browser
+        assert local.get("/api/sources", headers={"Authorization": "Bearer wrong"}).status_code == 401
+        for h in ("X-Forwarded-For", "Cf-Connecting-Ip", "Forwarded"):  # tunnels / proxies are never local
+            assert local.get("/api/sources", headers={h: "203.0.113.9"}).status_code == 401
+        monkeypatch.setattr(get_settings(), "local_access_without_token", False)
+        assert local.get("/api/sources").status_code == 401
+    with TestClient(app, client=("192.168.1.20", 50000)) as lan:
+        assert lan.get("/api/sources").status_code == 401  # other devices on Wi-Fi need the token
+
+
 def test_refuses_public_bind_without_token(monkeypatch):
     from app import main
 

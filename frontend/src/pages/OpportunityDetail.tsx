@@ -63,7 +63,7 @@ export default function OpportunityDetail() {
             value={tab}
             onChange={setTab}
             tabs={[
-              { id: "overview", label: "Overview" }, { id: "claude", label: "Claude review" }, { id: "evidence", label: "Evidence" }, { id: "eligibility", label: "Eligibility" },
+              { id: "overview", label: "Overview" }, { id: "claude", label: "AI review" }, { id: "evidence", label: "Evidence" }, { id: "eligibility", label: "Eligibility" },
               { id: "scores", label: "Scores" }, { id: "research", label: "Research" }, { id: "contacts", label: "Contacts" },
               { id: "chains", label: "Relationships" }, { id: "outreach", label: "Outreach" },
             ]}
@@ -239,16 +239,16 @@ function ClaudeTab({ oid, onChange }: { oid: number; onChange: () => void }) {
   };
   const r = reviews.data?.[0];
   return (
-    <Card title="Claude review — retrieve, verify, check eligibility" actions={<button className="btn primary" disabled={act.busy} onClick={start}>{act.busy ? "Claude is reviewing… (1–3 min)" : r ? "Review again" : "Review with Claude"}</button>}>
+    <Card title="AI review — retrieve, verify, check eligibility" actions={<button className="btn primary" disabled={act.busy} onClick={start}>{act.busy ? "AI is reviewing… (1–3 min)" : r ? "Review again" : "Review with AI"}</button>}>
       <Msg msg={act.msg} />
-      <div className="muted small">Claude reads the opportunity and the source pages (robots.txt respected), records only facts it can quote exactly, and gives an eligibility opinion. The rule engine stays authoritative for mandatory conditions; disagreements are flagged for you.</div>
+      <div className="muted small">The AI agent reads the opportunity and the source pages (robots.txt respected), records only facts it can quote exactly, and gives an eligibility opinion. The rule engine stays authoritative for mandatory conditions; disagreements are flagged for you.</div>
       {!reviews.data ? <Loading /> : !r ? <Empty>Not reviewed yet</Empty> : (
         <div className="stack" style={{ marginTop: 14 }}>
           <div className="row gap-s small"><StatusBadge status={r.status} /><span className="muted">#{r.id} · {fmtDate(r.created_at, true)} · {r.model} · {r.turns} turns · {r.tokens.toLocaleString()} tokens · {r.trigger}</span></div>
           {r.error && <div className="alert err">{r.error}</div>}
           {r.verdict && (
             <dl className="kv">
-              <dt>Claude's verdict</dt><dd><EligibilityBadge outcome={r.verdict} /></dd>
+              <dt>AI verdict</dt><dd><EligibilityBadge outcome={r.verdict} /></dd>
               <dt>Rule engine</dt><dd><EligibilityBadge outcome={r.rule_outcome} /> {r.agrees_with_rules === false && <span className="alert warn small">Disagreement — review manually (rules stay authoritative)</span>}{r.agrees_with_rules === true && <span className="muted small"> agrees</span>}</dd>
               <dt>Still open?</dt><dd>{r.opportunity_open}</dd>
               <dt>Summary</dt><dd className="wrap">{r.summary}</dd>

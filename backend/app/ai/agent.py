@@ -1,7 +1,7 @@
-"""Claude review agent: retrieve → verify → check eligibility for one opportunity.
+"""AI review agent: retrieve → verify → check eligibility for one opportunity.
 
-Claude drives a short tool loop (Anthropic SDK tool runner) over tools that stay inside the app's
-rules:
+The model drives a short tool loop — OpenRouter function calling by default, or the Anthropic SDK
+tool runner when IOI_ANTHROPIC_API_KEY is set — over tools that stay inside the app's rules:
 
 - `get_opportunity` / `get_business_profile` — read-only context (the real profile only).
 - `fetch_page` — public pages through SafeHttp (SSRF guard, robots.txt, rate limit, size cap), bounded
@@ -26,7 +26,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.ai.claude import FALLBACK_BETA, ClaudeClient
+from app.ai.claude import FALLBACK_BETA
 from app.ai.extraction import quote_in
 from app.ai.openrouter import AIUnavailable
 from app.db import utcnow
@@ -110,7 +110,7 @@ def _agrees(ai_verdict: str, rule_outcome: str | None) -> bool | None:
 class ReviewSession:
     """Holds the tools and the verified state for one review."""
 
-    def __init__(self, db: Session, opp: Opportunity, ai: ClaudeClient, http: SafeHttp, max_fetches: int) -> None:
+    def __init__(self, db: Session, opp: Opportunity, ai, http: SafeHttp, max_fetches: int) -> None:
         self.db, self.opp, self.ai, self.http = db, opp, ai, http
         self.max_fetches = max_fetches
         self.pages: dict[str, str] = {}
@@ -245,14 +245,64 @@ class ReviewSession:
         return [get_opportunity, get_business_profile, fetch_page, record_fact, add_requirement]
 
 
-def run_review(db: Session, opp: Opportunity, *, trigger: str = "manual", http_client=None, resolver=None, ai: ClaudeClient | None = None) -> AIReview:
+def _openrouter_loop(ai, sess: "ReviewSession", review: AIReview, max_iterations: int) -> AgentVerdict:
+    """Function-calling loop over OpenRouter chat completions using the same verified tools."""
+    tools = sess.tools()
+    by_name = {t.name: t for t in tools}
+    specs = []
+    for t in tools:
+        d = t.to_dict()
+        specs.append({"type": "function", "function": {"name": d["name"], "description": d.get("description", ""), "parameters": d["input_schema"]}})
+    schema = json.dumps(AgentVerdict.model_json_schema())
+    messages: list[dict] = [
+        {"role": "system", "content": SYSTEM + "\n\nWhen you are done using tools, reply with ONLY a JSON object matching this schema:\n" + schema},
+        {"role": "user", "content": f"Review opportunity #{sess.opp.id}. Retrieve, verify and check eligibility, then give your verdict."},
+    ]
+    model_used = None
+    for _ in range(max_iterations):
+        msg, model_used = ai.chat("agent_review", messages, tools=specs, max_tokens=4000)
+        review.turns += 1
+        calls = msg.get("tool_calls") or []
+        messages.append({k: v for k, v in msg.items() if k in ("role", "content", "tool_calls")} | {"role": "assistant"})
+        if not calls:
+            break
+        for c in calls:
+            fn = c.get("function") or {}
+            tool = by_name.get(fn.get("name"))
+            try:
+                args = json.loads(fn.get("arguments") or "{}")
+                result = tool.call(args) if tool else f"Error: unknown tool {fn.get('name')}"
+            except Exception as exc:  # noqa: BLE001 - bad arguments go back to the model as an error
+                result = f"Error: {type(exc).__name__}: {exc}"
+            messages.append({"role": "tool", "tool_call_id": c.get("id"), "content": str(result)[:15000]})
+    review.model = model_used or ai.model_name
+    content = (messages[-1].get("content") or "") if messages[-1].get("role") == "assistant" else ""
+    for attempt in range(2):
+        text = re.sub(r"^```(?:json)?\s*|\s*```$", "", (content or "").strip())
+        m = re.search(r"\{.*\}", text, re.S)
+        if m:
+            try:
+                return AgentVerdict.model_validate_json(m.group(0))
+            except ValueError:
+                pass
+        if attempt == 0:
+            messages.append({"role": "user", "content": "Now give your final verdict as ONLY the JSON object matching the schema."})
+            msg, _ = ai.chat("agent_review", messages, json_mode=True, max_tokens=3000)
+            review.turns += 1
+            content = msg.get("content") or ""
+    raise AIUnavailable("Model did not return a valid verdict")
+
+
+def run_review(db: Session, opp: Opportunity, *, trigger: str = "manual", http_client=None, resolver=None, ai=None) -> AIReview:
+    """Run the review agent with the configured provider (OpenRouter, or Claude when its key is set)."""
+    from app.ai.openrouter import get_ai
+
     review = AIReview(opportunity_id=opp.id, trigger=trigger, status="running")
     db.add(review)
     db.commit()
-    try:
-        ai = ai or ClaudeClient(db)
-    except AIUnavailable as exc:
-        review.status, review.error, review.finished_at = "failed", str(exc), utcnow()
+    ai = ai or get_ai(db)
+    if ai is None:
+        review.status, review.error, review.finished_at = "failed", "AI is not configured: set IOI_OPENROUTER_API_KEY and IOI_OPENROUTER_MODEL in .env", utcnow()
         db.commit()
         return review
     s = ai.s
@@ -264,28 +314,31 @@ def run_review(db: Session, opp: Opportunity, *, trigger: str = "manual", http_c
     sess = ReviewSession(db, opp, ai, http, s.agent_max_fetches)
     started = time.monotonic()
     try:
-        runner = ai.client.beta.messages.tool_runner(
-            model=s.anthropic_model,
-            max_tokens=16000,
-            betas=[FALLBACK_BETA],
-            fallbacks="default",
-            output_config={"effort": s.anthropic_effort},
-            system=SYSTEM,
-            tools=sess.tools(),
-            output_format=AgentVerdict,
-            max_iterations=s.agent_max_iterations,
-            messages=[{"role": "user", "content": f"Review opportunity #{opp.id}. Retrieve, verify and check eligibility, then give your verdict."}],
-        )
-        last = None
-        for message in runner:
-            last = message
-            review.turns += 1
-            ai.record_usage("agent_review", message, started, ok=True)
-        if last is None or last.stop_reason == "refusal":
-            raise AIUnavailable("Claude declined the review" if last else "No response")
-        verdict: AgentVerdict | None = last.parsed_output
-        if verdict is None:
-            raise AIUnavailable(f"Review ended without a verdict (stop_reason={last.stop_reason}; turn limit {s.agent_max_iterations})")
+        if ai.provider != "claude":
+            verdict = _openrouter_loop(ai, sess, review, s.agent_max_iterations)
+        else:
+            runner = ai.client.beta.messages.tool_runner(
+                model=s.anthropic_model,
+                max_tokens=16000,
+                betas=[FALLBACK_BETA],
+                fallbacks="default",
+                output_config={"effort": s.anthropic_effort},
+                system=SYSTEM,
+                tools=sess.tools(),
+                output_format=AgentVerdict,
+                max_iterations=s.agent_max_iterations,
+                messages=[{"role": "user", "content": f"Review opportunity #{opp.id}. Retrieve, verify and check eligibility, then give your verdict."}],
+            )
+            last = None
+            for message in runner:
+                last = message
+                review.turns += 1
+                ai.record_usage("agent_review", message, started, ok=True)
+            if last is None or last.stop_reason == "refusal":
+                raise AIUnavailable("Claude declined the review" if last else "No response")
+            verdict = last.parsed_output
+            if verdict is None:
+                raise AIUnavailable(f"Review ended without a verdict (stop_reason={last.stop_reason}; turn limit {s.agent_max_iterations})")
     except (AIUnavailable, APIStatusError, APIConnectionError) as exc:
         db.rollback()
         review = db.get(AIReview, review.id)

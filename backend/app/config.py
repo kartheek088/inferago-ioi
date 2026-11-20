@@ -46,6 +46,8 @@ class Settings(BaseSettings):
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
     openrouter_timeout_seconds: float = 60.0
     openrouter_max_retries: int = 2
+    # With a token set, still let a browser on this machine (direct 127.0.0.1, no proxy) in without it.
+    local_access_without_token: bool = True
     # Claude (Anthropic API). When a key is set, Claude is used for every AI task instead of OpenRouter.
     anthropic_api_key: str | None = None
     anthropic_model: str = "claude-opus-5-5"

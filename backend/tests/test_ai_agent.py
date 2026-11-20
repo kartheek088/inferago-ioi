@@ -147,7 +147,7 @@ def test_agent_failure_recorded(db, web, claude_on):
 def test_review_without_key_fails_cleanly(db, web):
     opp = _opp(db)
     review = run_review(db, opp, http_client=web.client())
-    assert review.status == "failed" and "IOI_ANTHROPIC_API_KEY" in review.error
+    assert review.status == "failed" and "IOI_OPENROUTER_API_KEY" in review.error
 
 
 def test_api_requires_claude(client, db):
@@ -188,3 +188,62 @@ def test_claude_complete_json_and_refusal(db, claude_on):
     assert calls[0]["output_format"] is AISummary and "<data>" in calls[0]["messages"][0]["content"]
     with pytest.raises(AIUnavailable):
         ai.complete_json("t", "Summarise", "x", AISummary)
+
+
+
+class FakeOpenRouter:
+    """Stands in for OpenRouterClient.chat: scripted tool calls, then a JSON verdict."""
+
+    provider = "openrouter"
+    model_name = "openrouter/auto"
+
+    def __init__(self, turns):
+        self.turns, self.sent = list(turns), []
+        self.s = get_settings()
+        self.calls = self.tokens = 0
+
+    def chat(self, task, messages, *, tools=None, json_mode=False, max_tokens=4000):
+        self.sent.append({"messages": [dict(m) for m in messages], "tools": tools, "json_mode": json_mode})
+        return self.turns.pop(0), "some/model"
+
+
+def _call(i, name, args):
+    import json as _j
+    return {"id": f"c{i}", "type": "function", "function": {"name": name, "arguments": _j.dumps(args)}}
+
+
+def test_openrouter_agent_loop(db, web):
+    web.text(PAGE_URL, PAGE_HTML)
+    opp = _opp(db)
+    verdict_json = VERDICT.model_dump_json()
+    fake = FakeOpenRouter([
+        {"role": "assistant", "content": None, "tool_calls": [_call(1, "fetch_page", {"url": PAGE_URL}), _call(2, "get_business_profile", {})]},
+        {"role": "assistant", "content": None, "tool_calls": [
+            _call(3, "record_fact", {"kind": "deadline", "value": "15-12-2026", "quote": "Last date for submission of bids is 15-12-2026.", "source_url": PAGE_URL}),
+            _call(4, "add_requirement", {"clause": "Bidders must have a valid GST registration.", "source_url": PAGE_URL}),
+            _call(5, "record_fact", {"kind": "budget", "value": "x", "quote": "made up text here", "source_url": PAGE_URL}),
+        ]},
+        {"role": "assistant", "content": "Here is my verdict:\n```json\n" + verdict_json + "\n```"},
+    ])
+    review = run_review(db, opp, http_client=web.client(), ai=fake)
+    assert review.status == "success", review.error
+    assert review.model == "some/model" and review.turns == 3
+    assert [f["kind"] for f in review.facts] == ["deadline"]
+    tools = fake.sent[0]["tools"]
+    assert {t["function"]["name"] for t in tools} == {"get_opportunity", "get_business_profile", "fetch_page", "record_fact", "add_requirement"}
+    tool_msgs = [m for m in fake.sent[2]["messages"] if m["role"] == "tool"]
+    assert any("Rejected" in m["content"] for m in tool_msgs)
+    assert review.rule_outcome in ("not_eligible", "partner_route") and review.agrees_with_rules is False
+
+
+def test_openrouter_agent_retries_for_json(db, web):
+    opp = _opp(db)
+    fake = FakeOpenRouter([
+        {"role": "assistant", "content": "I think it is fine."},
+        {"role": "assistant", "content": AgentVerdict(opportunity_open="unknown", verdict="insufficient_information", summary="s", recommended_next_step="n").model_dump_json()},
+    ])
+    review = run_review(db, opp, http_client=web.client(), ai=fake)
+    assert review.status == "success" and fake.sent[1]["json_mode"] is True
+
+    bad = FakeOpenRouter([{"role": "assistant", "content": "no"}, {"role": "assistant", "content": "still no"}])
+    assert run_review(db, opp, http_client=web.client(), ai=bad).status == "failed"

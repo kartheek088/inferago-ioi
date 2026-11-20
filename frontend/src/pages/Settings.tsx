@@ -84,7 +84,7 @@ export default function SettingsPage() {
             <div className="muted xs">AI only locates text; every value must match a verbatim quote from the source, and eligibility is still decided by the rules.</div>
             <label className="row gap"><input type="checkbox" checked={aiRefine} onChange={(e) => setAiRefine(e.target.checked)} /> Refine uncertain classifications during collection (max 10 AI calls per source run)</label>
             <label className="row gap"><input type="checkbox" checked={aiDocs} onChange={(e) => setAiDocs(e.target.checked)} /> Document import: fill fields the rules missed and locate requirement clauses</label>
-            <label className="row gap">Claude review agent: review the top <input type="number" min={0} max={50} style={{ width: 70 }} value={autoReview} onChange={(e) => setAutoReview(Number(e.target.value))} /> new opportunities after each discovery run (0 = off; needs IOI_ANTHROPIC_API_KEY)</label>
+            <label className="row gap">AI review agent: review the top <input type="number" min={0} max={50} style={{ width: 70 }} value={autoReview} onChange={(e) => setAutoReview(Number(e.target.value))} /> new opportunities after each discovery run (0 = off)</label>
           </Card>
           <div className="grid grid-2">
             <Card title="Search terms">

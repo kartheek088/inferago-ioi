@@ -6,7 +6,7 @@ _Last updated: 2026-11-20_
 
 | Check | Result |
 |---|---|
-| Backend tests `uv run pytest` | **129 passed** (unit, GeM connector (mocked), AI quote verification, API integration, mocked connectors, dedupe, eligibility hard gates, score arithmetic, source failures, missing evidence, relationship provenance, outreach approval, migrations, SSRF/auth, documents, AI fallback, end-to-end) |
+| Backend tests `uv run pytest` | **132 passed** (unit, GeM connector (mocked), AI quote verification, API integration, mocked connectors, dedupe, eligibility hard gates, score arithmetic, source failures, missing evidence, relationship provenance, outreach approval, migrations, SSRF/auth, documents, AI fallback, end-to-end) |
 | Alembic `upgrade head` + `alembic check` | Pass — no drift between models and migration |
 | Migration upgrade → downgrade → upgrade | Pass (test) |
 | Frontend `tsc` type check | Pass |
@@ -24,7 +24,8 @@ _Last updated: 2026-11-20_
 - Source registry with honest statuses (23 sources: 5 live, 3 manual, 1 credential-gated, 14 planned); enable/schedule/config from UI; per-source health, failure counts, run logs.
 - Live GeM public bid connector (read-only; service bids only; bid PDF parsed to labelled fields with page refs; structured eligibility incl. MSE/startup relaxation). Disabled by default.
 - AI extraction with verbatim-quote verification: document field filling, requirement-clause location (rules still classify/evaluate), classification refinement for uncertain items (≤10 calls/run). Toggles in Settings.
-- Claude review agent (Anthropic SDK tool runner, `claude-opus-5-5`, server-side refusal fallbacks): fetches source pages via SafeHttp, records only verbatim-quoted facts, submits clauses to the rule engine, returns a structured eligibility opinion compared with the rules (disagreements flagged). Manual ("Claude review" tab), batch, and automatic after discovery (top N, default 3). Claude is used for all AI tasks when `IOI_ANTHROPIC_API_KEY` is set.
+- AI review agent — OpenRouter function calling by default (Anthropic SDK tool runner with `claude-opus-5-5` if `IOI_ANTHROPIC_API_KEY` is ever set): fetches source pages via SafeHttp, records only verbatim-quoted facts, submits clauses to the rule engine, returns a structured eligibility opinion compared with the rules (disagreements flagged). Manual ("AI review" tab), batch, and automatic after discovery (top N, default 3).
+- Local browser on the laptop (direct 127.0.0.1, no proxy headers) works without the token; tunnel/LAN/proxied requests always need it. Other devices get a sign-in box on 401.
 - Public HTTPS link via Cloudflare quick tunnel (`scripts/public-tunnel.sh`).
 - Live Hacker News connector (freelancer thread buyers, contract roles, incremental keyword search).
 - Generic RSS/Atom connector (term and title filters); owner can add feeds at runtime. Live n8n Jobs and Make Hire-a-Pro feeds.
@@ -50,7 +51,7 @@ _Last updated: 2026-11-20_
 ## Partially implemented
 
 - **Reddit connector** — OAuth app-only flow and listing parser implemented; disabled without credentials. Not tested against live Reddit (no credentials available); unit-tested only for the disabled path.
-- **AI features** — used for research briefs, document summaries, outreach drafts, document field extraction, requirement-clause location and classification refinement. Every AI value must match a verbatim quote in the source or it is discarded; eligibility outcomes remain rule-decided. Verification logic is unit-tested with a fake client; the new extraction prompts and the Claude review agent have not yet been exercised against the live model (no Anthropic key configured yet); agent tools and verification are tested with a scripted fake client.
+- **AI features** — used for research briefs, document summaries, outreach drafts, document field extraction, requirement-clause location and classification refinement. Every AI value must match a verbatim quote in the source or it is discarded; eligibility outcomes remain rule-decided. Verification logic is unit-tested with a fake client; agent tools, verification and both provider loops are tested with scripted fake clients.
 - **GeM connector** — verified manually once against the live site (search + one bid PDF); a full automated run has not been executed yet. Label parsing is tuned on one bid layout; other layouts may leave fields empty (never invented).
 - **Relationship discovery** — regex-based extraction from posts/pages produces hypotheses; precision is modest; human confirmation is the intended workflow.
 - **Organisation enrichment** — website only when present in the post; Hacker News posts often link to job boards (filtered as platforms), so many organisations have no website and research falls back to "public thread is the only contact route".
