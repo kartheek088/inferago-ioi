@@ -38,7 +38,7 @@ export default function Overview() {
   const { data, error, loading, reload } = useApi(() => api.get<Summary>("/dashboard/summary"));
   return (
     <>
-      <PageHeader title="Overview" subtitle="Live counts from the IOI database. Nothing here is hardcoded." actions={<button className="btn" onClick={reload}>Refresh</button>} />
+      <PageHeader title="Stats" subtitle="Live counts from the database." actions={<button className="btn" onClick={reload}>Refresh</button>} />
       <ErrorBox error={error} onRetry={reload} />
       {loading && !data && <Loading />}
       {data && (

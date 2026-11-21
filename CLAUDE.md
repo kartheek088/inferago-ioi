@@ -49,6 +49,7 @@ cd frontend && npm run typecheck && npm run build
 | `evaluation.py` | re-runs eligibility + scoring for an opportunity |
 | `research.py`, `contacts.py`, `relationships.py` | selective research, contact routes, chain graph |
 | `outreach.py` | drafts, approvals, call tasks, follow-ups |
+| `prospects.py` | prospect finder: OSM/Overpass search, segments, gap scoring, website audit, pitch drafts (`api/prospects.py`) |
 | `documents.py`, `imports.py` | PDF/DOCX tender analysis, manual URL/doc import |
 | `http_client.py` | SSRF-safe fetcher (timeouts, size limits, robots, rate limit) |
 | `jobs.py` | bounded thread pool + opt-in APScheduler |

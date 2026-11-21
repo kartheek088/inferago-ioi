@@ -10,6 +10,11 @@ Discover → Collect → Deduplicate → Classify → Filter → Research select
 → Prepare outreach → Human approval → Follow-up
 ```
 
+It also finds **prospects**: local businesses, independent professionals and bigger firms that have
+no website, a weak website, or could use CRM, AI or ERP/SAP, even though they have not asked.
+Go to **Prospects**, then **Find prospects**. The most reliable way is to download the free South India map file
+once (link on that screen) and click **Scan map file**.
+
 Not SaaS. V1 never sends email, places calls, submits bids, registers as a vendor or signs anything.
 
 ## Stack
@@ -57,7 +62,7 @@ Researched partner programmes: `cd backend && uv run python ../scripts/seed_part
 
 ```bash
 scripts/test.sh                      # everything below
-cd backend && uv run pytest -q       # 110 backend tests, no live network
+cd backend && uv run pytest -q       # 161 backend tests, no live network
 cd frontend && npm run typecheck && npm run build
 ```
 
@@ -68,6 +73,7 @@ cd frontend && npm run typecheck && npm run build
 | Hacker News — Seeking-Freelancer thread, contract roles in Who-is-hiring, keyword search | **Live** (public APIs, no key) |
 | n8n community "Jobs" + Make community "Hire a Pro" (public RSS) | **Live** (enabled by default) |
 | Generic RSS/Atom feed | **Live** once you set a permitted `feed_url` |
+| OpenStreetMap prospects (Overpass mirror: private.coffee / kumi.systems / mail.ru) | **Live**: public open data (ODbL), robots.txt respected |
 | Manual URL import | **Manual** (owner-submitted, SSRF-protected, robots.txt respected) |
 | Tender / procurement document import (PDF, DOCX) | **Manual** |
 | Official company websites (selective research) | **Manual**, used by research workflow |

@@ -33,10 +33,25 @@ SERVICE_PATTERNS: dict[str, list[str]] = {
         r"integrat(e|ion|ions|ing)", r"\berp\b", r"\bsap\b", r"odoo", r"tally", r"zoho", r"salesforce",
         r"hubspot", r"migrat(e|ion)", r"digiti[sz](e|ation)", r"paperless", r"legacy", r"moderni[sz](e|ation)",
     ],
+    "website": [
+        r"\bwebsites?\b", r"landing page", r"web ?design", r"wordpress", r"shopify", r"woocommerce", r"webflow",
+        r"e-?commerce (site|store)", r"online store", r"redesign (our|my|the) (site|website)",
+    ],
+    "marketing": [
+        r"\bseo\b", r"digital marketing", r"social media (marketing|management)", r"google ads", r"\bppc\b",
+        r"google (my )?business profile", r"lead generation", r"performance marketing", r"meta ads", r"email marketing",
+    ],
+    "crm": [r"\bcrm\b", r"zoho", r"hubspot", r"salesforce", r"pipedrive", r"freshsales", r"lead management"],
+    "ai": [
+        r"\bai\b", r"artificial intelligence", r"chat ?bots?", r"\bllms?\b", r"\bgpt\b", r"openai", r"\brag\b",
+        r"machine learning", r"ai agents?", r"voice (bot|agent)", r"whatsapp bot",
+    ],
+    "erp": [r"\berp\b", r"\bsap\b", r"s/?4 ?hana", r"\babap\b", r"odoo", r"netsuite", r"dynamics 365", r"tally"],
+    "strategy": [r"digital (strategy|transformation)", r"online presence", r"go[- ]digital", r"growth strategy"],
 }
 
 OUT_OF_SCOPE = [
-    r"\blogo\b", r"graphic design", r"\bseo\b", r"social media marketing", r"video edit", r"\bgame (dev|development)\b",
+    r"\blogo\b", r"graphic design", r"video edit", r"\bgame (dev|development)\b",
     r"unity3d", r"illustrat(or|ion)", r"copywrit", r"voice[- ]over", r"data entry",
 ]
 
