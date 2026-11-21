@@ -11,7 +11,7 @@ from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app import jobs
-from app.api import big_projects, core, opportunities, outreach, prospects, sources
+from app.api import big_projects, chains, core, opportunities, outreach, prospects, sources
 from app.api.deps import require_auth
 from app.config import get_settings
 
@@ -50,7 +50,7 @@ def _recover_prospect_runs(db) -> None:
     from app.prospects import evaluate
 
     from app.overture import extra_exclusion
-    from app.prospects import exclusion_reason
+    from app.prospects import _COLLEGE_NAMES, exclusion_reason
 
     from app.prospects import RULES_VERSION
     from app.settings_store import get_setting, set_setting
@@ -61,6 +61,8 @@ def _recover_prospect_runs(db) -> None:
     for p in db.scalars(select(Prospect)):  # rules changed since last start: re-check every prospect once
         evaluate(p)
         # Apply the chain / college / IT / government rules to prospects found before those rules existed.
+        if p.segment != "college" and p.type_label in ("School", "Coaching / training") and _COLLEGE_NAMES.search(p.name or ""):
+            p.segment, p.type_label = "college", "College / university"
         why = exclusion_reason(p.raw_tags or {}, p.name, p.business_type)
         if not why and p.source == "overture":
             why = extra_exclusion(p.name, p.type_label, p.segment)
@@ -90,7 +92,7 @@ def create_app() -> FastAPI:
     )
     app.include_router(core.public, prefix="/api")
     protected = [Depends(require_auth)]
-    for r in (core.router, sources.router, opportunities.router, outreach.router, prospects.router, big_projects.router):
+    for r in (core.router, sources.router, opportunities.router, outreach.router, prospects.router, big_projects.router, chains.router):
         app.include_router(r, prefix="/api", dependencies=protected)
     _mount_frontend(app)
     return app

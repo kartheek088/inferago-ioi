@@ -1,18 +1,23 @@
-"""Big projects from public business news: who just won a contract, is building a plant, or expanding.
+"""Big private projects where Inferago's help fits — found in public business and city news.
 
-Those companies often need outside help to deliver (software, dashboards, websites, CRM,
-automation, ERP integration). The owner can approach them as a vendor or delivery partner.
+What counts: a private company opening or building something (hospital, hotel, showroom/outlets,
+housing project, school, factory, warehouse) or expanding. Those projects need websites, booking
+and lead CRMs, WhatsApp/AI assistants, ERP and automation, and are usually delivered with local
+vendors, so a direct or informal approach can work.
 
-Sources: public RSS feeds whose robots.txt allows reading (checked by SafeHttp on every fetch).
-Every lead keeps the article link and headline. The company name is read from the headline and
-is labelled as such; nothing else (contacts, budgets) is guessed. Nothing is sent automatically.
+What does not count: tenders, government / PSU / infrastructure contracts (roads, rail, power,
+defence), stake sales, results and other market news, and IT companies (competitors).
+
+Every lead keeps the article link and headline. Company names and connected companies are read
+from the text, with the sentence they came from, and stay "unconfirmed" until the owner confirms
+them. Nothing is sent automatically.
 """
 
 from __future__ import annotations
 
 import calendar
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import timedelta
 from typing import Any
 from urllib.parse import quote_plus
@@ -22,59 +27,103 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db import utcnow
+from app.geo_states import state_from_text
 from app.http_client import FetchError, SafeHttp
 from app.models import ProjectLead
 from app.normalize import html_to_text
 
 # Checked 2026-11-22: robots.txt allows these, and each returns a valid feed.
 DEFAULT_FEEDS: dict[str, str] = {
+    "The Hindu · Chennai": "https://www.thehindu.com/news/cities/chennai/feeder/default.rss",
+    "The Hindu · Coimbatore": "https://www.thehindu.com/news/cities/Coimbatore/feeder/default.rss",
+    "The Hindu · Madurai": "https://www.thehindu.com/news/cities/Madurai/feeder/default.rss",
+    "The Hindu · Tiruchi": "https://www.thehindu.com/news/cities/Tiruchirapalli/feeder/default.rss",
+    "The Hindu · Tamil Nadu": "https://www.thehindu.com/news/national/tamil-nadu/feeder/default.rss",
+    "The Hindu · Bengaluru": "https://www.thehindu.com/news/cities/bangalore/feeder/default.rss",
+    "The Hindu · Hyderabad": "https://www.thehindu.com/news/cities/Hyderabad/feeder/default.rss",
+    "The Hindu · Kochi": "https://www.thehindu.com/news/cities/Kochi/feeder/default.rss",
+    "The Hindu · Business": "https://www.thehindu.com/business/feeder/default.rss",
     "BusinessLine · Companies": "https://www.thehindubusinessline.com/companies/feeder/default.rss",
     "BusinessLine · Economy": "https://www.thehindubusinessline.com/economy/feeder/default.rss",
-    "The Hindu · Business": "https://www.thehindu.com/business/feeder/default.rss",
-    "The Hindu · Tamil Nadu": "https://www.thehindu.com/news/national/tamil-nadu/feeder/default.rss",
-    "ET Infra": "https://infra.economictimes.indiatimes.com/rss/topstories",
+    "ET · Hotels & restaurants": "https://economictimes.indiatimes.com/industry/services/hotels-/-restaurants/rssfeeds/13357212.cms",
     "ET · Industry": "https://economictimes.indiatimes.com/industry/rssfeeds/13352306.cms",
     "ET · Small business": "https://economictimes.indiatimes.com/small-biz/rssfeeds/5575607.cms",
+    "ET Realty": "https://realty.economictimes.indiatimes.com/rss/topstories",
+    "ET Health": "https://health.economictimes.indiatimes.com/rss/topstories",
+    "ET Retail": "https://retail.economictimes.indiatimes.com/rss/topstories",
+    "ET Hospitality": "https://hospitality.economictimes.indiatimes.com/rss/topstories",
 }
 
 _AMOUNT = r"(?:₹|rs\.?|inr|\$|usd|us\$)?\s?[\d,]+(?:\.\d+)?\s?(?:crore|cr\b|lakh|billion|bn\b|million|mn\b)"
+
+# Something new is being opened / built / expanded.
 PROJECT_PATTERNS: list[tuple[str, str]] = [
-    ("contract_won", r"\b(bags?|bagged|wins?|won|secures?|secured|bags orders?|awarded|receives?|received|gets?|lands?|clinch(es|ed)?)\b.{0,60}\b(orders?|contracts?|projects?|tenders?|deals?|mandates?)\b"),
-    ("contract_won", r"\b(awards?|awarded)\b.{0,40}\b(contract|project|order)\b.{0,10}\bto\b"),
-    ("new_facility", r"\b(new|greenfield|brownfield|sets? up|to set up|setting up|inaugurat\w+|commission\w*|opens?|launch(es|ed)?|to build|builds?|break(s)? ground|foundation stone)\b.{0,60}\b(plant|factory|facility|unit|campus|hospital|hotel|mall|park|warehouse|data cent(er|re)|office|hub|terminal|port|airport|metro|plants|units|showrooms?|stores?|outlets?|branches)\b"),
-    ("investment", r"\b(invest\w*|to invest|capex|expan\w+|scale up|ramp up)\b.{0,80}" + _AMOUNT),
-    ("investment", _AMOUNT + r".{0,60}\b(investment|expansion|capex|project|plant|facility)\b"),
-    ("mou", r"\bmou\b|memorandum of understanding|\bties up\b|\bpartners with\b|\bjoint venture\b"),
+    ("new_facility", r"\b(new|greenfield|sets? up|to set up|setting up|inaugurat\w+|commission\w*|opens?|opening|launch(es|ed)?|to build|builds?|"
+                     r"break(s)? ground|foundation stone|unveil\w*|starts? (work|construction))\b.{0,70}\b(plant|factory|facility|unit|campus|hospital|"
+                     r"clinic|centre|center|hotel|resort|mall|park|warehouse|showrooms?|stores?|outlets?|branch(es)?|school|academy|project|township|"
+                     r"tower|apartments?|villas?|restaurant|cafe|kitchen)\b"),
+    ("expansion", r"\b(invest\w*|to invest|capex|expan\w+|scale up|ramp up|add(s|ing)? \d+|plans? \d+|\d+ new)\b.{0,80}"
+                  r"(" + _AMOUNT + r"|outlets?|stores?|hospitals?|hotels?|showrooms?|branches|centres|centers|plants?|beds|rooms|units)"),
+    ("launch", r"\b(launch(es|ed)?|enters?|forays? into|debuts?|rolls? out)\b.{0,60}\b(brand|stores?|outlets?|showrooms?|franchise|in (chennai|"
+               r"coimbatore|madurai|tamil nadu|bengaluru|hyderabad|kochi|kerala|south india))\b"),
+    ("partnership", r"\b(ties up|tie-up|partners with|joint venture|signs mou|inks mou)\b"),
 ]
-# Headlines that are about markets, people or policy rather than a project someone must deliver.
+TYPE_LABEL = {"new_facility": "New hospital / hotel / plant / outlet", "expansion": "Expansion", "launch": "New brand / outlets", "partnership": "Partnership"}
+TYPE_POINTS = {"new_facility": 30, "expansion": 25, "launch": 25, "partnership": 10}
+
+# Where our help fits → (pattern, sector, how we fit, services). First match wins; no match = skip.
+SECTORS: list[tuple[str, str, str, list[str]]] = [
+    (r"hospital|clinic|healthcare|health care|diagnostic|medical cent|eye care|dental|maternity|fertility|ivf|dialysis|pharmacy chain|wellness",
+     "Healthcare", "Patient booking website, WhatsApp/AI appointment assistant, CRM for follow-ups, billing/HMS integration.",
+     ["website", "ai", "crm", "integration"]),
+    (r"hotel|resort|homestay|hospitality|restaurant|cafe|café|qsr|food court|cloud kitchen|bakery|sweets|banquet|convention",
+     "Hospitality & food", "Booking/ordering website, guest CRM, WhatsApp concierge bot, POS/PMS integration, local SEO for each outlet.",
+     ["website", "crm", "ai", "marketing"]),
+    (r"showroom|stores?\b|outlets?|retail|mall|franchise|jewell|apparel|fashion|footwear|furniture|electronics|supermarket|hypermarket|d2c|brand",
+     "Retail", "Store website and catalogue, loyalty CRM, billing–inventory integration, local SEO and Google listings for every outlet.",
+     ["website", "crm", "integration", "marketing"]),
+    (r"apartment|villa|township|residential|housing|real estate|realty|plotted|gated community|commercial space|office space|co-?working|tower",
+     "Real estate", "Project website and ad landing pages, lead CRM for site visits, WhatsApp follow-up bot, booking/payment tracking.",
+     ["website", "crm", "ai", "marketing"]),
+    (r"\bschool\b|college|university|academy|coaching|training cent|skill cent|preschool|edtech|campus",
+     "Education", "Admissions website, enquiry CRM, fee and attendance app, WhatsApp updates for students and parents.",
+     ["website", "crm", "internal_apps"]),
+    (r"gym|fitness|salon|spa\b|beauty",
+     "Wellness", "Membership/booking website, CRM with renewals, WhatsApp reminders.", ["website", "crm", "ai"]),
+    (r"plant|factory|manufactur|unit\b|facility|warehouse|logistics|cold storage|textile|garment|auto component|ev\b|battery|food processing|"
+     r"packaging|foundry|machining|pharma",
+     "Manufacturing & logistics", "ERP/SAP integration, production and inventory dashboards, workflow automation, supplier/dealer portal, company website.",
+     ["erp", "automation", "internal_apps", "integration", "website"]),
+]
+
+# Not for us: tenders and government / infrastructure work.
+TENDER_OR_GOVT = re.compile(
+    r"\b(tenders?|bids?|bidding|e-?procurement|epc|l1 bidder|letter of intent|loi|awarded by|nhai|highway|expressway|railways?|"
+    r"rail (line|project|yard)|metro rail|metro|airport authority|port trust|ntpc|bhel|ongc|gail|psu|state-run|state-owned|public sector|"
+    r"ministry|union minister|union government|centre's|central government|govt\.?|government|chief minister|corporation of|municipal|"
+    r"panchayat|smart city|defence|army|navy|air force|isro|drdo|power (supply|transmission|plant|project)|transmission|discom|mw|gw|"
+    r"solar park|wind (farm|park)|dam|irrigation|ppp|amrut|jal jeevan|pmay|scheme)\b",
+    re.I,
+)
+# Market, people and incident news.
 NOISE = re.compile(
-    r"\b(sensex|nifty|share price|shares (rise|fall|jump|surge|slip|drop)|stock (to buy|picks)|target price|ipo (opens|subscribed|gmp)|"
-    r"q[1-4] (results|net|profit)|quarterly (results|profit)|net profit|dividend|rating|downgrade|upgrade|resigns|appoint\w*|ceo says|"
-    r"obituary|dies|arrested|fraud|scam|explained|opinion|editorial|podcast|quiz|horoscope|"
-    r"urges|slams|demands|should|accuses|blames|criticis\w+|protest\w*|clarify|dismissal|court|hc order|stay on)\b"
+    r"\b(sensex|nifty|share price|shares (rise|fall|jump|surge|slip|drop)|stock (to buy|picks)|target price|ipo|q[1-4]|quarterly|net profit|"
+    r"dividend|rating|downgrade|upgrade|resigns|appoint\w*|ceo says|obituary|dies|arrested|fraud|scam|bribe|explained|opinion|editorial|"
+    r"podcast|quiz|horoscope|urges|slams|demands|should|accuses|blames|criticis\w+|protest\w*|clarify|dismissal|court|hc order|stay on|"
+    r"stake|acquires|acquisition|merger|raises|funding round|valuation|layoffs?|strike|accident|fire|flood|rain)\b"
     r"|^(how|why|what|when|is|are|can|will|from)\b",
     re.I,
 )
-TYPE_LABEL = {"contract_won": "Won a contract / order", "new_facility": "New plant / facility", "investment": "Investment / expansion", "mou": "MoU / partnership"}
-TYPE_SERVICES = {
-    "contract_won": ["integration", "automation", "internal_apps", "backend"],
-    "new_facility": ["erp", "crm", "website", "automation", "internal_apps"],
-    "investment": ["erp", "crm", "automation", "website", "ai"],
-    "mou": ["integration", "backend", "api"],
-}
-TYPE_POINTS = {"contract_won": 30, "new_facility": 30, "investment": 25, "mou": 10}
-
-TN_PLACES = ["tamil nadu", "chennai", "coimbatore", "madurai", "tiruchirappalli", "trichy", "salem", "tirunelveli", "erode", "vellore",
-             "hosur", "tiruppur", "thanjavur", "kanchipuram", "sriperumbudur", "thoothukudi", "tuticorin", "krishnagiri", "ranipet",
-             "chengalpattu", "oragadam", "puducherry", "karur", "dindigul", "nagercoil", "cuddalore"]
-INDIA_PLACES = ["bengaluru", "bangalore", "hyderabad", "mumbai", "delhi", "pune", "kolkata", "ahmedabad", "kochi", "kerala", "karnataka",
-                "andhra pradesh", "telangana", "maharashtra", "gujarat", "noida", "gurugram", "visakhapatnam", "nagpur", "lucknow", "jaipur", "odisha"]
+_IT_HEADLINE = re.compile(r"\b(it services|it firm|it company|software (firm|company|maker)|saas|tech firm|tech major|infotech|technologies|"
+                          r"infosys|tcs|wipro|hcl ?tech|tech mahindra|cognizant|accenture|aurionpro|ltimindtree|mphasis|persistent|zoho|freshworks|"
+                          r"data cent(er|re)|gcc|global capability)\b", re.I)
 _COMPANY = re.compile(
-    r"^(?P<co>[A-Z0-9][\w&.,'()\- ]{1,80}?)\s+(?:arm\s+|unit\s+|subsidiary\s+)?(?:bags?|bagged|wins?|won|secures?|secured|receives?|gets?|lands?|"
-    r"to set up|sets up|setting up|to build|builds|inaugurates?|commissions?|opens?|launches|plans|to invest|invests|signs|inks|ties up|partners|"
-    r"expands|to expand|announces|clinches|awards|breaks ground)\b"
+    r"^(?P<co>[A-Z0-9][\w&.,'()\- ]{1,80}?)\s+(?:arm\s+|unit\s+|subsidiary\s+)?(?:to set up|sets up|setting up|to build|builds|inaugurates?|"
+    r"commissions?|opens?|launches|unveils|plans|to invest|invests|signs|inks|ties up|partners|expands|to expand|announces|breaks ground|"
+    r"enters|forays|adds|to add|starts)\b"
 )
-_STRIP = re.compile(r"^(?:[A-Z][\w-]*:\s+)")  # "Exclusive: ..." prefixes
+_STRIP = re.compile(r"^(?:[A-Z][\w-]*:\s+)")
+SOUTH = {"Karnataka", "Kerala", "Andhra Pradesh", "Telangana", "Puducherry"}
 
 
 @dataclass
@@ -83,75 +132,18 @@ class Match:
     company: str | None
     amount: str | None
     location: str | None
+    state: str | None
+    sector: str
+    fit: str
+    services: list[str]
     score: float
-    reasons: list[str]
+    reasons: list[str] = field(default_factory=list)
 
 
-def analyse(title: str, summary: str) -> Match | None:
-    text = f"{title}. {summary}"
-    if NOISE.search(title):
-        return None
-    ptype = None
-    for kind, pat in PROJECT_PATTERNS:
-        if re.search(pat, title, re.I):
-            ptype = kind
-            break
-    if ptype is None:
-        for kind, pat in PROJECT_PATTERNS:
-            if kind != "mou" and re.search(pat, summary[:600], re.I):
-                ptype = kind
-                break
-    if ptype is None:
-        return None
-    reasons = [f"+{TYPE_POINTS[ptype]} {TYPE_LABEL[ptype].lower()}"]
-    score = float(TYPE_POINTS[ptype])
-    amount = None
-    m = re.search(_AMOUNT, text, re.I)
-    if m and re.search(r"\d", m.group(0)):
-        amount = m.group(0).strip()
-        crore = _to_crore(amount)
-        if crore is not None and crore >= 1000:
-            score += 25
-            reasons.append(f"+25 very large project ({amount})")
-        elif crore is not None and crore >= 100:
-            score += 18
-            reasons.append(f"+18 large project ({amount})")
-        else:
-            score += 8
-            reasons.append(f"+8 amount stated ({amount})")
-    low = text.lower()
-    location = next((p.title() for p in TN_PLACES if re.search(rf"\b{re.escape(p)}\b", low)), None)
-    if location:
-        score += 25
-        reasons.append(f"+25 in Tamil Nadu area ({location}) — easy to meet in person")
-    else:
-        location = next((p.title() for p in INDIA_PLACES if re.search(rf"\b{re.escape(p)}\b", low)), None)
-        if location:
-            score += 10
-            reasons.append(f"+10 in India ({location})")
-    company = None
-    clean = _STRIP.sub("", title.strip())
-    winner = re.search(r"\bawards?\b.{0,60}?\b(?:contract|order|project)\b.{0,10}?\bto\s+(?P<co>[A-Z][\w&.'\- ]{1,60}?)(?=\s+(?:for|in|at|worth|of)\b|[,:]|$)", clean)
-    cm = _COMPANY.match(clean)
-    if winner:  # "X awards contract to Y": Y is the one delivering, so Y is who we approach
-        company = winner.group("co").strip(" ,.-")[:200]
-    elif cm:
-        company = cm.group("co").strip(" ,.-")[:200]
-    if company and _is_it_company(company, text):
-        return None  # IT / software firms are competitors, not clients
-        score += 10
-        reasons.append("+10 company named in the headline")
-    return Match(ptype, company, amount, location, min(100.0, score), reasons)
-
-
-_IT_HEADLINE = re.compile(r"\b(it services|it firm|it company|software (firm|company|maker)|saas|tech firm|tech major|infotech|technologies|"
-                          r"infosys|tcs|wipro|hcl ?tech|tech mahindra|cognizant|accenture|aurionpro|ltimindtree|mphasis|persistent|zoho|freshworks)\b", re.I)
-
-
-def _is_it_company(company: str, text: str) -> bool:
+def _is_it_company(company: str | None, text: str) -> bool:
     from app.prospects import _IT_NAMES
 
-    return bool(_IT_NAMES.search(company) or _IT_HEADLINE.search(company) or _IT_HEADLINE.search(text[:300]))
+    return bool((company and (_IT_NAMES.search(company) or _IT_HEADLINE.search(company))) or _IT_HEADLINE.search(text[:300]))
 
 
 def _to_crore(amount: str) -> float | None:
@@ -169,6 +161,104 @@ def _to_crore(amount: str) -> float | None:
     return v  # crore
 
 
+def analyse(title: str, summary: str) -> Match | None:
+    text = f"{title}. {summary}"
+    head = text[:400]
+    if NOISE.search(title) or TENDER_OR_GOVT.search(head):
+        return None
+    ptype = next((k for k, pat in PROJECT_PATTERNS if re.search(pat, title, re.I)), None) or next(
+        (k for k, pat in PROJECT_PATTERNS if k != "partnership" and re.search(pat, summary[:500], re.I)), None)
+    if ptype is None:
+        return None
+    sector = next(((name, fit, svc) for pat, name, fit, svc in SECTORS if re.search(pat, head, re.I)), None)
+    if sector is None:
+        return None  # nothing we can help with
+    company = None
+    cm = _COMPANY.match(_STRIP.sub("", title.strip()))
+    if cm:
+        company = cm.group("co").strip(" ,.-")[:200]
+    if _is_it_company(company, text):
+        return None  # IT companies are competitors
+    reasons = [f"+{TYPE_POINTS[ptype]} {TYPE_LABEL[ptype].lower()}", f"fits us: {sector[0].lower()}"]
+    score = float(TYPE_POINTS[ptype])
+    amount = None
+    m = re.search(_AMOUNT, text, re.I)
+    if m and re.search(r"\d", m.group(0)):
+        amount = m.group(0).strip()
+        crore = _to_crore(amount)
+        if crore is not None and 5 <= crore <= 500:
+            score += 15
+            reasons.append(f"+15 mid-size project ({amount}) — built with local vendors")
+        elif crore is not None and crore < 5:
+            score += 8
+            reasons.append(f"+8 small project ({amount})")
+        elif crore is not None and crore <= 2000:
+            score += 5
+            reasons.append(f"+5 large project ({amount})")
+        elif crore is not None:
+            score -= 10
+            reasons.append(f"-10 very large ({amount}) — usually goes to big IT firms")
+    location, state = state_from_text(text)
+    if state == "Tamil Nadu":
+        score += 25
+        reasons.append(f"+25 in Tamil Nadu ({location}) — you can meet them in person")
+    elif state in SOUTH:
+        score += 15
+        reasons.append(f"+15 in South India ({location}, {state})")
+    elif state:
+        score += 8
+        reasons.append(f"+8 in India ({location}, {state})")
+    if company:
+        score += 10
+        reasons.append("+10 company named in the headline")
+    return Match(ptype, company, amount, location.title() if location else None, state, sector[0], sector[1], sector[2],
+                 max(0.0, min(100.0, score)), reasons)
+
+
+# ------------------------------------------------------------------------------------------------
+# Who works with whom: companies connected to a project, read from the article text
+# ------------------------------------------------------------------------------------------------
+_NAME = r"(?P<co>(?:[A-Z][\w&.'-]*)(?:\s+(?:[A-Z][\w&.'-]*|&|of|and)){0,6})"
+LINK_PATTERNS: list[tuple[str, str]] = [
+    ("builder / contractor", r"\b(?:built|constructed|executed|being built|being constructed|to be built|to be constructed)\s+by\s+" + _NAME),
+    ("designer / architect", r"\b(?:designed|planned)\s+by\s+" + _NAME),
+    ("developer", r"\b(?:developed|promoted)\s+by\s+" + _NAME),
+    ("operator / manager", r"\b(?:operated|managed|run)\s+by\s+" + _NAME),
+    ("partner", r"\b(?:in partnership with|in collaboration with|partnered with|tied up with|joint venture with|in association with)\s+" + _NAME),
+    ("supplier", r"\b(?:supplied by|equipment from|technology from|sourced from)\s+" + _NAME),
+    ("contractor", r"\b(?:contractor|architects?|consultants?|EPC partner|construction partner|interiors? partner)\s*,?\s+" + _NAME),
+    ("builder / contractor", _NAME + r"\s+(?:will|is to|has been chosen to)\s+(?:build|construct|execute|design|develop|supply|operate)\b"),
+]
+_STOP_NAMES = re.compile(r"^(The|This|It|He|She|They|We|India|Indian|Tamil Nadu|Chennai|State|Government|Centre|Minister|Mr|Ms|Dr|The Hindu|PTI|A|An)$")
+
+
+def extract_links(text: str, url: str, own_company: str | None = None) -> list[dict[str, Any]]:
+    """Companies connected to the project, each with the sentence it came from (unconfirmed)."""
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for sentence in re.split(r"(?<=[.!?])\s+", text):
+        if len(sentence) > 600:
+            continue
+        for role, pat in LINK_PATTERNS:
+            for m in re.finditer(pat, sentence):
+                co = re.sub(r"\s+(of|and|&)$", "", m.group("co").strip(" ,.&"))
+                if len(co) < 3 or _STOP_NAMES.match(co) or (own_company and co.lower() in own_company.lower()) or co.lower() in seen:
+                    continue
+                seen.add(co.lower())
+                out.append({"company": co[:120], "role": role, "quote": sentence.strip()[:400], "url": url, "confirmed": None})
+    return out[:10]
+
+
+def article_text(http: SafeHttp, url: str, limit: int = 8000) -> str:
+    res = http.get(url)  # robots.txt and size limits enforced by SafeHttp
+    paras = re.findall(r"<p[^>]*>(.*?)</p>", res.text, re.I | re.S)
+    text = " ".join(html_to_text(p) for p in paras) if paras else html_to_text(res.text)
+    return re.sub(r"\s+", " ", text)[:limit]
+
+
+# ------------------------------------------------------------------------------------------------
+# Feeds → leads
+# ------------------------------------------------------------------------------------------------
 def fetch_feed(http: SafeHttp, url: str) -> list[dict[str, Any]]:
     res = http.get(url)
     parsed = feedparser.parse(res.content)
@@ -186,14 +276,17 @@ def fetch_feed(http: SafeHttp, url: str) -> list[dict[str, Any]]:
     return items
 
 
-def run_project_search(db: Session, feeds: dict[str, str] | None = None, http: SafeHttp | None = None, max_age_days: int = 21) -> dict[str, Any]:
+def run_project_search(db: Session, feeds: dict[str, str] | None = None, http: SafeHttp | None = None, max_age_days: int = 21,
+                       read_articles: int = 40) -> dict[str, Any]:
     from datetime import UTC, datetime
 
     own = http is None
     http = http or SafeHttp(rate_limit_per_minute=20)
     feeds = feeds or DEFAULT_FEEDS
-    stats = {"feeds_ok": 0, "feeds_failed": [], "articles": 0, "new": 0, "matched": 0}
+    stats: dict[str, Any] = {"feeds_ok": 0, "feeds_failed": [], "articles": 0, "new": 0, "matched": 0, "links_found": 0}
     cutoff = utcnow() - timedelta(days=max_age_days)
+    fresh: list[ProjectLead] = []
+    seen_links: set[str] = set()
     try:
         for name, url in feeds.items():
             try:
@@ -205,8 +298,9 @@ def run_project_search(db: Session, feeds: dict[str, str] | None = None, http: S
             for it in items:
                 stats["articles"] += 1
                 link = it["link"]
-                if not link or not it["title"]:
+                if not link or not it["title"] or link in seen_links:
                     continue
+                seen_links.add(link)
                 published = datetime.fromtimestamp(it["published_ts"], UTC).replace(tzinfo=None) if it["published_ts"] else None
                 if published and published < cutoff:
                     continue
@@ -216,13 +310,29 @@ def run_project_search(db: Session, feeds: dict[str, str] | None = None, http: S
                 stats["matched"] += 1
                 if db.scalar(select(ProjectLead.id).where(ProjectLead.url == link)):
                     continue
-                db.add(ProjectLead(
+                lead = ProjectLead(
                     url=link[:2048], title=it["title"][:500], summary=it["summary"][:2000] or None, feed=name,
                     published_at=published, company=m.company, project_type=m.project_type, amount_text=m.amount,
-                    location=m.location, services=TYPE_SERVICES[m.project_type], score=m.score, score_reasons=m.reasons,
-                    status="new",
-                ))
+                    location=m.location, state=m.state, fit=m.fit, services=m.services, score=m.score,
+                    score_reasons=[*m.reasons], status="new", links=[], contact_log=[],
+                )
+                db.add(lead)
+                fresh.append(lead)
                 stats["new"] += 1
+            db.commit()
+        # Read the full article for the best new leads to find connected companies (builders, partners...).
+        for lead in sorted(fresh, key=lambda x: -x.score)[:read_articles]:
+            try:
+                text = article_text(http, lead.url)
+            except FetchError:
+                continue
+            lead.links = extract_links(f"{lead.title}. {lead.summary or ''} {text}", lead.url, lead.company)
+            lead.links_checked_at = utcnow()
+            stats["links_found"] += len(lead.links)
+            if not lead.state:
+                place, st = state_from_text(text[:3000])
+                if st:
+                    lead.location, lead.state = place.title(), st
             db.commit()
     finally:
         if own:
@@ -231,21 +341,17 @@ def run_project_search(db: Session, feeds: dict[str, str] | None = None, http: S
 
 
 def approach(lead: ProjectLead) -> dict[str, Any]:
-    """Draft for approaching the company as a vendor. Nothing is sent."""
+    """Draft for approaching the company (or a connected vendor). Nothing is sent."""
     who = lead.company or "your team"
-    what = {
-        "contract_won": "winning this contract",
-        "new_facility": "the new facility",
-        "investment": "the expansion",
-        "mou": "the new partnership",
-    }[lead.project_type]
+    what = {"new_facility": "the new project", "expansion": "the expansion", "launch": "the launch", "partnership": "the new partnership"}.get(
+        lead.project_type, "the project")
+    fit = lead.fit or "Websites, CRM, automation and ERP integration."
     msg = (
         f"Hello {who},\n\n"
         f"Congratulations on {what}" + (f" ({lead.amount_text})" if lead.amount_text else "") + ". "
-        "Projects like this usually create extra software and digital work: dashboards and reporting, workflow automation, "
-        "integrations between systems, ERP/CRM setup, and websites or portals.\n\n"
-        "Inferago Tech Services (Tamil Nadu) can take on part of that as a delivery partner or vendor, so your core team "
-        "stays focused on the project.\n\nWould you be open to a short call with whoever handles IT or vendor onboarding?\n\n"
+        f"New projects like this usually need some digital work done quickly: {fit[0].lower() + fit[1:]}\n\n"
+        "Inferago Tech Services (Tamil Nadu) can take this on for you, or alongside your contractors and vendors, "
+        "so your team can stay focused on the opening.\n\nCould we have a short call with whoever is handling the project?\n\n"
         "Thank you,\nInferago Tech Services"
     )
     q = quote_plus(f"{lead.company} official website contact") if lead.company else None
@@ -258,9 +364,21 @@ def approach(lead: ProjectLead) -> dict[str, Any]:
         },
         "how_to": [
             "Open the article and confirm the company and project.",
-            "Find the company's official website and its vendor / supplier registration or procurement contact.",
-            "Look for the project head or IT head; a warm intro through LinkedIn usually works best.",
+            "Look at the connected companies (builder, architect, partners): they often need a digital vendor too, and can introduce you.",
+            "Find the project head or owner; a warm intro through a local vendor or LinkedIn works best.",
             "Send the draft yourself after editing it. Nothing is sent by IOI.",
         ],
-        "note": "Company name was read from the headline — check it in the article before contacting.",
+        "note": "Company names are read from the news text — check them in the article before contacting.",
     }
+
+
+FOLLOW_UP_DAYS = {"contacted": 4, "interested": 2}
+
+
+def record_contact(lead: ProjectLead, channel: str, outcome: str, note: str | None, actor: str) -> None:
+    now = utcnow()
+    lead.contact_log = [*(lead.contact_log or []), {"at": now.isoformat(), "channel": channel, "outcome": outcome, "note": note, "by": actor}]
+    lead.last_contacted_at = now
+    lead.status = outcome
+    days = FOLLOW_UP_DAYS.get(outcome)
+    lead.next_follow_up = now + timedelta(days=days) if days else None

@@ -6,7 +6,7 @@ _Last updated: 2026-11-21_
 
 | Check | Result |
 |---|---|
-| Backend tests `uv run pytest` | **169 passed** (unit, GeM connector (mocked), AI quote verification, API integration, mocked connectors, dedupe, eligibility hard gates, score arithmetic, source failures, missing evidence, relationship provenance, outreach approval, migrations, SSRF/auth, documents, AI fallback, end-to-end) |
+| Backend tests `uv run pytest` | **172 passed** (unit, GeM connector (mocked), AI quote verification, API integration, mocked connectors, dedupe, eligibility hard gates, score arithmetic, source failures, missing evidence, relationship provenance, outreach approval, migrations, SSRF/auth, documents, AI fallback, end-to-end) |
 | Alembic `upgrade head` + `alembic check` | Pass — no drift between models and migration |
 | Migration upgrade → downgrade → upgrade | Pass (test) |
 | Frontend `tsc` type check | Pass |
@@ -43,6 +43,26 @@ _Last updated: 2026-11-21_
   "Number works" is set only by a human: the confirm button, or a call/WhatsApp logged as interested, not interested or won.
   WhatsApp links are offered only for mobile numbers. Map files over 300 MB use a temporary disk index instead of RAM;
   a file still being written (modified in the last 2 minutes) cannot be scanned.
+- **Call list, qualification, quality, states, upgrades, colleges, multi-branch (2026-11-22).**
+  - *Call list* (`/call`): one prospect at a time from `/api/prospects/next`. Due follow-ups come first, then the best new one
+    for the chosen group (no website / website upgrade / colleges), state and quality. There are tel: and wa.me buttons and a call script.
+    Outcomes are one keypress: no answer (retry tomorrow), call back (preset or chosen time), not interested, interested
+    (opens qualification: needs, budget, decision maker, timeline, current setup → "qualified" when all fit), wrong number,
+    and skip. A daily counter tracks the target of 30. Nothing is dialled or sent automatically.
+  - *Quality* (`quality_level` established / good / small) comes only from listing facts: business type value, address, email,
+    social page, hours, website, confirmed phone and Overture confidence; small-ticket types (kiosks, grocery, mobile shops…) score lower.
+    Lists and the call list show "good and established" by default.
+  - *States*: from the listing's ISO region (Overture), `addr:state`, or a listed city within 40 km; otherwise unknown.
+  - *Website upgrade*: Overture scan mode `upgrade` keeps businesses that have a real website (need level `check_site`).
+    "Check websites" audits homepages in the background (robots.txt respected) and marks broken or weak ones (3+ gaps) `upgrade`.
+  - *Colleges* are listed again as their own segment, kept even with a website; government colleges stay out (tenders).
+  - *Multi-branch businesses* (`/multi-branch`, `app/chains.py`): Overture listings grouped by normalised name; 3–40 separate
+    locations (about 1 km apart), at most 2 states, no brand field. Evidence is either branches sharing a phone or social page,
+    or the same name and category in one state. Banks, government, IT and national chains are excluded.
+  - *Big projects* reworked: private projects where our services fit (healthcare, hospitality, retail, real estate, education,
+    wellness, manufacturing). Tenders, government, PSU and infrastructure news and IT companies are dropped. Projects have a state,
+    a "how we fit" line, connected companies read from the article (builder, architect, partner, supplier, each with its quote,
+    unconfirmed until the owner confirms), a contact log with follow-ups, and CSV export. City and sector feeds were added.
 - **Overture Maps business directory (2026-11-22).** Overture "places" is open data (CDLA-Permissive-2.0) from Meta, Microsoft,
   Foursquare and others. It is far richer than OSM for India; one 5×5 km area of Coimbatore has 14,442 places, 6,025 of them with a
   phone and no website, nearly all with a Facebook page. DuckDB copies India's places that have a phone from the public S3 release

@@ -171,6 +171,73 @@ def _run_overture(run_id: int, action: str, kwargs: dict) -> None:
         db.commit()
 
 
+def _run_website_checks(run_id: int, limit: int, state: str | None, segment: str | None) -> None:
+    from sqlalchemy import select as _select
+
+    from app.db import utcnow
+    from app.http_client import SafeHttp
+    from app.models import Prospect, ProspectRun
+    from app.prospects import OPEN_STATUSES, audit_website
+
+    with SessionLocal() as db:
+        run = db.get(ProspectRun, run_id)
+        if not run:
+            return
+        stmt = _select(Prospect).where(Prospect.has_website.is_(True), Prospect.audited_at.is_(None), Prospect.status.in_(OPEN_STATUSES))
+        if state:
+            stmt = stmt.where(Prospect.state == state)
+        if segment:
+            stmt = stmt.where(Prospect.segment == segment)
+        todo = db.scalars(stmt.order_by(Prospect.score.desc()).limit(limit)).all()
+        run.log = [f"Checking {len(todo)} websites (homepage only, robots.txt respected)…"]
+        db.commit()
+        http = SafeHttp(rate_limit_per_minute=30)
+        upgrade = 0
+        try:
+            for i, p in enumerate(todo, 1):
+                db.refresh(run, ["status"])
+                if run.status == "stopping":
+                    run.log = [*run.log, "Stopped by you."]
+                    run.status = "stopped"
+                    break
+                audit_website(db, p, http=http)
+                upgrade += int(p.need_level == "upgrade")
+                run.found = i
+                if i % 10 == 0:
+                    run.log = [*run.log[:1], f"…checked {i} of {len(todo)}; {upgrade} need an upgrade so far"]
+                    db.commit()
+            else:
+                run.status = "success"
+            run.new = upgrade
+            run.log = [*run.log[:1], f"✓ Checked {run.found} websites: {upgrade} are broken or weak (need an upgrade)."]
+        except Exception as exc:  # noqa: BLE001
+            log.exception("Website checks failed")
+            db.rollback()
+            run.status, run.log = "failed", [*(run.log or []), f"✗ {str(exc)[:300]}"]
+        finally:
+            http.close()
+            run.finished_at = utcnow()
+            db.commit()
+
+
+def submit_website_checks(run_id: int, *, limit: int, state: str | None = None, segment: str | None = None) -> None:
+    executor().submit(_run_website_checks, run_id, limit, state, segment)
+
+
+def _run_chains(run_id: int, path: str) -> None:
+    from app.chains import run_chain_search
+    from app.models import ProspectRun
+
+    with SessionLocal() as db:
+        run = db.get(ProspectRun, run_id)
+        if run:
+            run_chain_search(db, run, path)
+
+
+def submit_chains(run_id: int, path: str) -> None:
+    executor().submit(_run_chains, run_id, path)
+
+
 def submit_overture(run_id: int, action: str, **kwargs) -> None:
     executor().submit(_run_overture, run_id, action, kwargs)
 

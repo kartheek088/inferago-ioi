@@ -62,7 +62,7 @@ Researched partner programmes: `cd backend && uv run python ../scripts/seed_part
 
 ```bash
 scripts/test.sh                      # everything below
-cd backend && uv run pytest -q       # 169 backend tests, no live network
+cd backend && uv run pytest -q       # 172 backend tests, no live network
 cd frontend && npm run typecheck && npm run build
 ```
 

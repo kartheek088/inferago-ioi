@@ -19,17 +19,21 @@ import SettingsPage from "./pages/Settings";
 import Today from "./pages/Today";
 import Prospects from "./pages/Prospects";
 import BigProjects from "./pages/BigProjects";
+import CallList from "./pages/CallList";
+import MultiBranch from "./pages/MultiBranch";
 
 const MAIN_NAV: { to: string; label: string; icon: string; hint: string }[] = [
   { to: "/", label: "Today", icon: "☀️", hint: "What to do now" },
-  { to: "/prospects", label: "Prospects", icon: "🎯", hint: "Businesses that need us" },
-  { to: "/big-projects", label: "Big projects", icon: "🏗️", hint: "Companies with new projects — approach as a vendor" },
-  { to: "/opportunities", label: "Projects & tenders", icon: "📋", hint: "People asking for work" },
-  { to: "/outreach", label: "Messages", icon: "✉️", hint: "Drafts to approve" },
+  { to: "/call", label: "Call list", icon: "📞", hint: "Call, log and qualify one by one" },
+  { to: "/prospects", label: "Prospects", icon: "🎯", hint: "No website, weak website, colleges" },
+  { to: "/multi-branch", label: "Multi-branch", icon: "🏬", hint: "Local chains with several branches" },
+  { to: "/big-projects", label: "Big projects", icon: "🏗️", hint: "New private projects where we fit" },
   { to: "/follow-ups", label: "Follow-ups", icon: "⏰", hint: "Calls & reminders" },
-];
+]
 
 const MORE_NAV: { to: string; label: string }[] = [
+  { to: "/opportunities", label: "Projects & tenders" },
+  { to: "/outreach", label: "Message drafts" },
   { to: "/discover", label: "Search for projects" },
   { to: "/stats", label: "Stats" },
   { to: "/organisations", label: "Organisations" },
@@ -90,6 +94,8 @@ function Shell() {
           <Route path="/" element={<Today />} />
           <Route path="/prospects" element={<Prospects />} />
           <Route path="/big-projects" element={<BigProjects />} />
+          <Route path="/call" element={<CallList />} />
+          <Route path="/multi-branch" element={<MultiBranch />} />
           <Route path="/stats" element={<Overview />} />
           <Route path="/discover" element={<Discover />} />
           <Route path="/opportunities" element={<Opportunities />} />

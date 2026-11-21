@@ -8,10 +8,11 @@ export interface Gap { key: string; label: string; detail: string }
 export interface Prospect {
   id: number;
   name: string;
-  segment: "small_business" | "professional" | "enterprise";
+  segment: "small_business" | "professional" | "enterprise" | "college";
   business_type: string;
   type_label: string;
   area: string | null;
+  state: string | null;
   country: string | null;
   address: string | null;
   phone: string | null;
@@ -31,8 +32,11 @@ export interface Prospect {
   audited_at: string | null;
   score: number;
   score_reasons: string[];
-  need_level: "definite" | "likely" | "maybe" | null;
+  need_level: "definite" | "likely" | "upgrade" | "check_site" | "maybe" | null;
   need_reasons: string[];
+  quality_level: "established" | "good" | "small" | null;
+  quality_reasons: string[];
+  qualification: Record<string, unknown>;
   status: string;
   notes: string | null;
   last_contacted_at: string | null;
@@ -40,13 +44,14 @@ export interface Prospect {
   contact_log: { at: string; channel: string; outcome: string; note: string | null }[];
 }
 interface Page { items: Prospect[]; total: number; limit: number; offset: number }
-interface Summary { total: number; no_website: number; hot: number; definite: number; follow_ups_due: number; by_segment: Record<string, number>; services: Record<string, string> }
+interface Summary { total: number; no_website: number; hot: number; definite: number; by_state: Record<string, number>; by_need: Record<string, number>; by_quality: Record<string, number>; follow_ups_due: number; by_segment: Record<string, number>; services: Record<string, string> }
 interface Areas { groups: Record<string, string[]>; selected: string[]; radius_m: number; max_per_area: number }
 interface Run { id: number; areas: string[]; status: string; found: number; new: number; updated: number; log: string[]; started_at: string; finished_at: string | null }
 interface Pitch { subject: string; message: string; call_script: string; links: { call: string | null; whatsapp: string | null; email: string | null; map: string }; note: string }
 
 export const SEGMENTS: { id: string; label: string; hint: string }[] = [
   { id: "", label: "Everyone", hint: "" },
+  { id: "college", label: "Colleges", hint: "Private colleges and universities" },
   { id: "small_business", label: "Small businesses", hint: "Shops, clinics, restaurants, hotels, schools" },
   { id: "professional", label: "Independent professionals", hint: "Doctors, lawyers, accountants, architects" },
   { id: "enterprise", label: "Bigger companies", hint: "Factories, Pvt Ltd firms: ERP / SAP / CRM" },
@@ -56,9 +61,10 @@ const RUN_LABEL: Record<string, string> = {
 };
 
 export const STATUS_LABEL: Record<string, string> = {
-  new: "New", shortlisted: "Shortlisted", contacted: "Contacted", interested: "Interested",
-  not_interested: "Not interested", won: "Won 🎉", rejected: "Skip",
+  new: "New", shortlisted: "Shortlisted", contacted: "Contacted", no_answer: "No answer", callback: "Call back", interested: "Interested",
+  qualified: "Qualified ✅", proposal: "Proposal sent", won: "Won 🎉", not_interested: "Not interested", rejected: "Skip",
 };
+const QUALITY: Record<string, [string, string]> = { established: ["Established", "good"], good: ["Good", "info"], small: ["Small", ""] };
 const SHORT_SERVICE: Record<string, string> = {
   website: "Website", marketing: "SEO & marketing", crm: "CRM", ai: "AI / chatbot", erp: "ERP / SAP",
   strategy: "Digital strategy", automation: "Automation", integration: "Integration", backend: "Software",
@@ -77,6 +83,8 @@ export function PhoneBadge({ p }: { p: Prospect }) {
 const NEED: Record<string, { label: string; tone: string }> = {
   definite: { label: "Definitely needs us", tone: "good" },
   likely: { label: "Likely needs us", tone: "info" },
+  upgrade: { label: "Website needs upgrade", tone: "warn" },
+  check_site: { label: "Website not checked yet", tone: "" },
   maybe: { label: "Maybe", tone: "" },
 };
 
@@ -531,6 +539,25 @@ function ProspectDrawer({ p, onClose, onChange }: { p: Prospect; onClose: () => 
   );
 }
 
+function UpgradeBar({ onDone, pending, need, setNeed }: { onDone: () => void; pending: number; need: string; setNeed: (v: string) => void }) {
+  const act = useAction();
+  const run = async () => {
+    const r = await act.run(() => api.post("/prospects/check-websites", { limit: 200 }), "Checking 200 websites in the background (about 5–10 minutes). Results appear as they finish.");
+    if (r) setTimeout(onDone, 60000);
+  };
+  return (
+    <div className="alert info small">
+      <span>
+        Businesses that have a website. We check each homepage (HTTPS, mobile-friendly, SEO basics, WhatsApp/chat, enquiry form, outdated) and list the ones
+        that are broken or weak. <strong>{pending.toLocaleString()}</strong> not checked yet.{" "}
+        <button className="link-btn" onClick={() => setNeed(need === "check_site" ? "upgrade" : "check_site")}>{need === "check_site" ? "Show weak sites" : "Show unchecked"}</button>
+      </span>
+      <button className="btn sm primary" disabled={act.busy} onClick={run}>Check 200 websites</button>
+      <Msg msg={act.msg} />
+    </div>
+  );
+}
+
 export function ProspectCard({ p, onOpen }: { p: Prospect; onOpen: () => void }) {
   return (
     <button className="p-card" onClick={onOpen}>
@@ -540,8 +567,8 @@ export function ProspectCard({ p, onOpen }: { p: Prospect; onOpen: () => void })
           <strong className="wrap">{p.name}</strong>
           {p.status !== "new" && <span className={`badge st-${p.status}`}>{STATUS_LABEL[p.status] ?? p.status}</span>}
         </div>
-        <div className="muted small">{p.type_label} · {p.area ?? "—"}</div>
-        <div className="row gap-s"><NeedBadge level={p.need_level} /><PhoneBadge p={p} />{p.social_links.length > 0 && <span className="badge" title="Has social media pages">👥 {p.audit?.social_activity === "very_active" ? "very active" : "social"}</span>}</div>
+        <div className="muted small">{p.type_label} · {p.area ?? "—"}{p.state && p.state !== p.area ? `, ${p.state}` : ""}</div>
+        <div className="row gap-s">{p.quality_level && <span className={`badge ${QUALITY[p.quality_level][1]}`}>{QUALITY[p.quality_level][0]}</span>}<NeedBadge level={p.need_level} /><PhoneBadge p={p} />{p.social_links.length > 0 && <span className="badge" title="Has social media pages">👥 {p.audit?.social_activity === "very_active" ? "very active" : "social"}</span>}</div>
         <div className="chips tight">
           {p.gaps.slice(0, 3).map((g) => <span key={g.key} className="chip warn static">{g.label}</span>)}
           {p.gaps.length > 3 && <span className="chip static">+{p.gaps.length - 3}</span>}
@@ -562,6 +589,9 @@ export default function Prospects() {
   const [noSite, setNoSite] = useState(true);
   const [phone, setPhone] = useState("");
   const [need, setNeed] = useState("definite");
+  const [group, setGroup] = useState<"none" | "upgrade" | "colleges">("none");
+  const [quality, setQuality] = useState("good");
+  const [stateF, setStateF] = useState("");
   const [service, setService] = useState("");
   const [q, setQ] = useState("");
   const [offset, setOffset] = useState(0);
@@ -569,15 +599,19 @@ export default function Prospects() {
   const [view, setView] = useState<"list" | "map">(() => (new URLSearchParams(window.location.search).get("view") === "map" ? "map" : "list"));
   const [open, setOpen] = useState<Prospect | null>(null);
   const summary = useApi(() => api.get<Summary & { by_area: Record<string, number> }>("/prospects/summary"));
+  const groupFilters = () =>
+    group === "upgrade" ? { has_website: true, need: need === "check_site" ? "check_site" : "upgrade", segment: segment || undefined }
+      : group === "colleges" ? { segment: "college" }
+      : { segment, need, has_website: noSite ? false : undefined };
   const list = useApi(
-    () => api.get<Page>("/prospects", { segment, status, area, q, service, phone, need, has_website: noSite ? false : undefined, offset, limit: 30 }),
-    [segment, status, area, q, service, noSite, phone, need, offset],
+    () => api.get<Page>("/prospects", { ...groupFilters(), status, area, q, service, phone, quality, state: stateF, offset, limit: 30 }),
+    [segment, status, area, q, service, noSite, phone, need, group, quality, stateF, offset],
   );
-  useEffect(() => setOffset(0), [segment, status, area, q, service, noSite, phone, need]);
+  useEffect(() => setOffset(0), [segment, status, area, q, service, noSite, phone, need, group, quality, stateF]);
   const s = summary.data;
   useEffect(() => { if (s && s.total === 0) setShowFind(true); }, [s?.total]);  // nothing yet → show the finder
   const refresh = () => { list.reload(); summary.reload(); };
-  const exportUrl = `/api/prospects/export.csv?${new URLSearchParams(Object.entries({ segment, status, area, service, phone, need, ...(noSite ? { has_website: "false" } : {}) }).filter(([, v]) => v) as [string, string][]).toString()}`;
+  const exportUrl = `/api/prospects/export.csv?${new URLSearchParams(Object.entries({ ...Object.fromEntries(Object.entries(groupFilters()).map(([k, v]) => [k, v === undefined ? "" : String(v)])), status, area, service, phone, quality, state: stateF }).filter(([, v]) => v) as [string, string][]).toString()}`;
   return (
     <>
       <header className="page-header">
@@ -599,13 +633,19 @@ export default function Prospects() {
           <div className="stat"><span className="stat-num">{s.follow_ups_due}</span><span>follow-ups due</span></div>
         </div>
       )}
-      <div className="seg-tabs" role="tablist">
-        {SEGMENTS.map((sg) => (
+      <div className="seg-tabs big-tabs" role="tablist">
+        {([["none", "🚫 No website", s?.no_website], ["upgrade", "🛠️ Website needs upgrade", s?.by_need?.upgrade], ["colleges", "🎓 Colleges", undefined]] as const).map(([k, label, n]) => (
+          <button key={k} className={`seg ${group === k ? "on" : ""}`} onClick={() => setGroup(k)}>{label}{n != null && <span className="seg-count">{Number(n).toLocaleString()}</span>}</button>
+        ))}
+      </div>
+      {group === "upgrade" && <UpgradeBar onDone={refresh} pending={s?.by_need?.check_site ?? 0} need={need} setNeed={setNeed} />}
+      {group === "none" && <div className="seg-tabs" role="tablist">
+        {SEGMENTS.filter((sg) => sg.id !== "college").map((sg) => (
           <button key={sg.id} role="tab" aria-selected={segment === sg.id} className={`seg ${segment === sg.id ? "on" : ""}`} onClick={() => setSegment(sg.id)} title={sg.hint}>
             {sg.label}{s && sg.id && <span className="seg-count">{s.by_segment[sg.id] ?? 0}</span>}
           </button>
         ))}
-      </div>
+      </div>}
       <div className="filters">
         <input placeholder="Search name or type…" value={q} onChange={(e) => setQ(e.target.value)} />
         <select value={status} onChange={(e) => setStatus(e.target.value)} aria-label="Status">
@@ -621,10 +661,19 @@ export default function Prospects() {
           <option value="">Any service</option>
           {Object.entries(SHORT_SERVICE).slice(0, 7).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
         </select>
-        <select value={need} onChange={(e) => setNeed(e.target.value)} aria-label="How sure">
+        {group === "none" && <select value={need} onChange={(e) => setNeed(e.target.value)} aria-label="How sure">
           <option value="definite">Definitely needs us</option>
           <option value="likely">Likely or definitely</option>
           <option value="">Show everyone</option>
+        </select>}
+        <select value={quality} onChange={(e) => setQuality(e.target.value)} aria-label="Business quality">
+          <option value="established">Established businesses</option>
+          <option value="good">Good and established</option>
+          <option value="">Include small businesses</option>
+        </select>
+        <select value={stateF} onChange={(e) => setStateF(e.target.value)} aria-label="State">
+          <option value="">All states</option>
+          {s && Object.entries(s.by_state ?? {}).map(([k, v]) => <option key={k} value={k}>{k === "unknown" ? "State unknown" : k} ({v.toLocaleString()})</option>)}
         </select>
         <select value={phone} onChange={(e) => setPhone(e.target.value)} aria-label="Phone">
           <option value="">Any phone</option>
@@ -632,7 +681,7 @@ export default function Prospects() {
           <option value="mobile">Mobile only (WhatsApp)</option>
           <option value="verified">Number confirmed by me</option>
         </select>
-        <label className="check"><input type="checkbox" checked={noSite} onChange={(e) => setNoSite(e.target.checked)} /> No website only</label>
+        {group === "none" && <label className="check"><input type="checkbox" checked={noSite} onChange={(e) => setNoSite(e.target.checked)} /> No website only</label>}
       </div>
       <div className="seg-tabs">
         <button className={`seg ${view === "list" ? "on" : ""}`} onClick={() => setView("list")}>☰ List</button>
@@ -641,7 +690,7 @@ export default function Prospects() {
       {view === "map" && (
         <Suspense fallback={<Loading />}>
           <ProspectMap
-            filters={{ segment, status, q, service, phone, need, has_website: noSite ? false : undefined }}
+            filters={{ ...groupFilters(), status, q, service, phone, quality, state: stateF }}
             onOpen={async (id) => { try { setOpen(await api.get<Prospect>(`/prospects/${id}`)); } catch { /* ignore */ } }}
           />
         </Suspense>

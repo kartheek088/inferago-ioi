@@ -35,7 +35,7 @@ def _write(path):
 
 def test_classify():
     assert classify("dentist", None, None)[1].label == "Dentist"
-    assert classify("college_university", None, None) is None
+    assert classify("college_university", None, None)[1].segment == "college"  # colleges are listed (owner, 2026-11-22)
     assert classify("textile_manufacturer", None, None)[1].segment == "enterprise"
     assert classify("motorsports_store", None, None)[2] == "car"  # dealer
 
@@ -49,9 +49,10 @@ def test_scan_rules(db, tmp_path):
     run_overture_scan(db, run, str(f), max_keep=100)
     assert run.status == "success", run.log
     names = {p.name for p in db.query(Prospect).all()}
-    # kept: dentist (social, no site), Honda dealer, salon whose only "website" is Facebook
-    # skipped: hospital (website), college, Pakistani number, low confidence, Zudio chain, IT company
-    assert names == {"Kovai Smile Dental", "Sri Vari Honda", "FB Only Salon"}
+    # kept: dentist (social, no site), college, Honda dealer, salon whose only "website" is Facebook
+    # skipped: hospital (website), Pakistani number, Myanmar listing, low confidence, Zudio chain, IT company
+    assert names == {"Kovai Smile Dental", "PSG College of Technology", "Sri Vari Honda", "FB Only Salon"}
+    assert db.query(Prospect).filter_by(name="PSG College of Technology").one().segment == "college"
     dent = db.query(Prospect).filter_by(name="Kovai Smile Dental").one()
     assert dent.source == "overture" and dent.source_url.startswith("https://explore.overturemaps.org/#17/11.01")
     assert dent.need_level == "definite" and dent.country == "India" and dent.area == "Coimbatore"
@@ -94,9 +95,64 @@ def test_extra_exclusions():
     from app.overture import extra_exclusion as e
 
     assert e("Government Medical College", "School", "small_business")
-    assert e("TFK Memorial Bible College", "School", "small_business") == "college or university"
+    assert e("TFK Memorial Bible College", "School", "small_business") is None  # colleges are listed now
     assert e("Prism Infotech", "Coaching / training", "small_business") == "IT / software company"
     assert e("Kerala Gramin Bank", "Events / weddings / catering", "small_business") == "bank"
     for ok in [("Sudiksha Prabhu Hospital Blood Bank", "Hospital"), ("Sri Engineering Works", "Manufacturer / wholesaler / logistics"),
                ("College Road Bakery", "Restaurant / cafe / food")]:
         assert e(ok[0], ok[1], "small_business") is None
+
+
+def test_upgrade_and_college_modes(db, tmp_path):
+    f = tmp_path / "overture-test.parquet"
+    _write(f)
+    run = ProspectRun(areas=["x"], status="running", log=[])
+    db.add(run)
+    db.commit()
+    run_overture_scan(db, run, str(f), max_keep=100, mode="upgrade")
+    assert {p.name for p in db.query(Prospect).all()} == {"Rani Hospital"}  # has a real website
+    rani = db.query(Prospect).one()
+    assert rani.has_website and rani.need_level == "check_site"
+    run2 = ProspectRun(areas=["x"], status="running", log=[])
+    db.add(run2)
+    db.commit()
+    run_overture_scan(db, run2, str(f), max_keep=100, mode="colleges")
+    assert "PSG College of Technology" in {p.name for p in db.query(Prospect).all()}
+
+
+def test_chains_build():
+    from app.chains import build_chain
+
+    def b(i, city, phone="+919876543210", web=None):
+        return {"id": f"x{i}", "name": "Kovai Sweets", "category": "bakery", "basic": "restaurant", "phone": phone, "socials": ["https://facebook.com/kovaisweets"],
+                "websites": web, "region": "IN-TN", "city": city, "address": "Main Rd", "lat": 11.0 + i / 10, "lon": 77.0, "conf": 0.6}
+
+    g = {"key": "kovai sweets", "nloc": 4, "nreg": 1, "ncat": 1, "shared": 1, "shared_values": ["+919876543210"],
+         "branches": [b(1, "Coimbatore"), b(2, "Tiruppur"), b(3, "Erode"), b(4, "Salem")]}
+    c = build_chain(g)
+    assert c["branch_count"] == 4 and c["main_state"] == "Tamil Nadu" and c["evidence"] == "shared_contact" and not c["has_website"]
+    assert c["phones"] == ["+919876543210"] and len(c["branches"]) == 4 and c["score"] > 60
+    bank = {**g, "key": "kovai bank", "branches": [{**x, "name": "Kovai Co-op Bank"} for x in g["branches"]]}
+    assert build_chain(bank) is None
+    nophone = {**g, "branches": [{**x, "phone": "123"} for x in g["branches"]]}
+    assert build_chain(nophone) is None
+
+
+def test_chains_api(client, db, monkeypatch, tmp_path):
+    from app.api import prospects as api_mod
+    from app.models import BusinessChain
+
+    db.add(BusinessChain(key="k1", name="Kovai Sweets", type_label="Restaurant / cafe / food", segment="small_business", branch_count=4,
+                         cities=["Coimbatore"], states=["Tamil Nadu"], main_state="Tamil Nadu", phones=["+919876543210"], socials=[],
+                         has_website=False, evidence="shared_contact", branches=[], services=["website"], score=80, score_reasons=[],
+                         status="new", contact_log=[]))
+    db.commit()
+    d = client.get("/api/multi-branch", params={"state": "Tamil Nadu"}).json()
+    assert d["total"] == 1
+    cid = d["items"][0]["id"]
+    r = client.post(f"/api/multi-branch/{cid}/contact", json={"channel": "call", "outcome": "callback", "callback_at": "2026-12-01T05:00:00"}).json()
+    assert r["status"] == "callback" and r["next_follow_up"].startswith("2026-12-01")
+    s = client.get("/api/multi-branch/summary").json()
+    assert s["total"] == 1 and s["by_state"] == {"Tamil Nadu": 1}
+    monkeypatch.setattr(api_mod, "map_folders", lambda: {"maps": tmp_path, "downloads": tmp_path})
+    assert client.post("/api/multi-branch/find").status_code == 404  # no directory file yet

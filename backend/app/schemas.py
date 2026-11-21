@@ -560,6 +560,7 @@ class ProspectOut(ORM):
     business_type: str
     type_label: str
     area: str | None
+    state: str | None
     country: str | None
     address: str | None
     lat: float | None
@@ -584,6 +585,9 @@ class ProspectOut(ORM):
     score_reasons: list[str]
     need_level: str | None
     need_reasons: list[str]
+    quality_level: str | None
+    quality_reasons: list[str]
+    qualification: dict[str, Any]
     status: str
     notes: str | None
     last_contacted_at: datetime | None
@@ -593,16 +597,27 @@ class ProspectOut(ORM):
     updated_at: datetime
 
 
+PROSPECT_STATUS = "^(new|shortlisted|contacted|no_answer|callback|interested|qualified|proposal|won|not_interested|rejected)$"
+
+
 class ProspectUpdate(BaseModel):
-    status: str | None = Field(None, pattern="^(new|shortlisted|contacted|interested|not_interested|won|rejected)$")
+    status: str | None = Field(None, pattern=PROSPECT_STATUS)
     notes: str | None = Field(None, max_length=5000)
     next_follow_up: datetime | None = None
 
 
 class ProspectContactIn(BaseModel):
     channel: str = Field(pattern="^(call|whatsapp|email|visit|other)$")
-    outcome: str = Field(pattern="^(contacted|interested|not_interested|won|rejected)$")
+    outcome: str = Field(pattern="^(contacted|no_answer|callback|interested|qualified|proposal|won|not_interested|rejected)$")
     note: str | None = Field(None, max_length=2000)
+    callback_at: datetime | None = None
+    qualification: dict[str, Any] | None = None  # needs, budget, decision_maker, timeline
+
+
+class CheckWebsitesIn(BaseModel):
+    limit: int = Field(100, ge=1, le=2000)
+    state: str | None = None
+    segment: str | None = Field(None, pattern="^(small_business|professional|enterprise|college)$")
 
 
 class ProspectSearchIn(BaseModel):
@@ -644,6 +659,12 @@ class ProjectLeadOut(ORM):
     project_type: str
     amount_text: str | None
     location: str | None
+    state: str | None
+    fit: str | None
+    links: list[dict[str, Any]]
+    contact_log: list[dict[str, Any]]
+    last_contacted_at: datetime | None
+    next_follow_up: datetime | None
     services: list[str]
     score: float
     score_reasons: list[str]
@@ -655,6 +676,17 @@ class ProjectLeadOut(ORM):
 class ProjectLeadUpdate(BaseModel):
     status: str | None = Field(None, pattern="^(new|shortlisted|contacted|interested|not_interested|won|rejected)$")
     notes: str | None = Field(None, max_length=5000)
+    next_follow_up: datetime | None = None
+
+
+class ProjectContactIn(BaseModel):
+    channel: str = Field(pattern="^(call|whatsapp|email|linkedin|visit|intro|other)$")
+    outcome: str = Field(pattern="^(contacted|interested|not_interested|won|rejected)$")
+    note: str | None = Field(None, max_length=2000)
+
+
+class LinkConfirmIn(BaseModel):
+    confirmed: bool
 
 
 class OvertureScanIn(BaseModel):
@@ -663,3 +695,42 @@ class OvertureScanIn(BaseModel):
     radius_km: float = Field(15.0, ge=1, le=100)
     max_keep: int = Field(200000, ge=10, le=1000000)
     min_confidence: float = Field(0.3, ge=0, le=1)
+    mode: str = Field("no_website", pattern="^(no_website|upgrade|colleges)$")
+
+
+class ChainOut(ORM):
+    id: int
+    name: str
+    type_label: str
+    segment: str
+    branch_count: int
+    cities: list[str]
+    states: list[str]
+    main_state: str | None
+    phones: list[str]
+    socials: list[str]
+    has_website: bool
+    evidence: str
+    evidence_detail: str | None
+    branches: list[dict[str, Any]]
+    services: list[str]
+    score: float
+    score_reasons: list[str]
+    status: str
+    notes: str | None
+    contact_log: list[dict[str, Any]]
+    last_contacted_at: datetime | None
+    next_follow_up: datetime | None
+
+
+class ChainUpdate(BaseModel):
+    status: str | None = Field(None, pattern=PROSPECT_STATUS)
+    notes: str | None = Field(None, max_length=5000)
+    next_follow_up: datetime | None = None
+
+
+class ChainContactIn(BaseModel):
+    channel: str = Field(pattern="^(call|whatsapp|email|visit|other)$")
+    outcome: str = Field(pattern="^(contacted|no_answer|callback|interested|qualified|proposal|won|not_interested|rejected)$")
+    note: str | None = Field(None, max_length=2000)
+    callback_at: datetime | None = None

@@ -31,7 +31,7 @@ from app.models import Prospect, ProspectRun
 from app.profile import SERVICE_KEYS
 
 # Bump when scoring / exclusion rules change: existing prospects are then re-checked once at startup.
-RULES_VERSION = "2026-11-22.3"
+RULES_VERSION = "2026-11-22.6"
 
 OVERPASS_ENDPOINTS = [
     "https://overpass.private.coffee/api/interpreter",
@@ -234,6 +234,8 @@ TYPES: dict[str, BizType] = {
     "amenity=driving_school": BizType("small_business", "Driving school", 3, _APPT),
     "amenity=language_school": BizType("small_business", "Language school", 3, _APPT),
     "amenity=school": BizType("small_business", "School", 3, ("website", "crm", "erp", "marketing")),
+    "amenity=college": BizType("college", "College / university", 3, ("website", "crm", "erp", "ai", "marketing")),
+    "amenity=university": BizType("college", "College / university", 3, ("website", "crm", "erp", "ai", "marketing")),
     "amenity=kindergarten": BizType("small_business", "Play school / kindergarten", 3, _APPT),
     "amenity=pharmacy": BizType("small_business", "Pharmacy", 2, ("website", "marketing", "crm")),
     "tourism=hotel": BizType("small_business", "Hotel", 3, ("website", "marketing", "crm", "ai")),
@@ -328,10 +330,7 @@ def exclusion_reason(tags: dict[str, str], name: str, type_key: str | None) -> s
         return "part of a chain or brand"
     if _CHAIN_NAMES.search(name) or _CHAIN_NAMES.search(tags.get("operator", "")):
         return "part of a chain or partner network"
-    if type_key in ("amenity=college", "office=educational_institution") and _COLLEGE_NAMES.search(name):
-        return "college or university"
-    if tags.get("amenity") in ("university",) or (_COLLEGE_NAMES.search(name) and (tags.get("amenity") in ("college", "school") or type_key == "amenity=school")):
-        return "college or university"
+    # Colleges are listed as their own group (owner, 2026-11-22). Government colleges stay out (tenders).
     if type_key in ("office=it", "office=telecommunication") or (type_key or "").startswith("office=") and _IT_NAMES.search(name):
         return "IT / software company"
     if tags.get("office") == "government" or tags.get("government") or tags.get("operator:type") in ("government", "public"):
@@ -372,6 +371,8 @@ def classify_tags(tags: dict[str, str], name: str) -> tuple[str, BizType] | None
         bt = BizType("professional", f"Craft ({tags['craft'].replace('_', ' ')})", 1, ("website", "marketing"))
     else:
         bt = TYPES[key]
+    if key in ("amenity=school", "office=educational_institution") and _COLLEGE_NAMES.search(name):
+        bt = BizType("college", "College / university", 3, ("website", "crm", "erp", "ai", "marketing"))
     # A company office whose name says Ltd / Industries / Mills is a larger firm (ERP/SAP potential).
     if bt.segment != "enterprise" and key in ("office=company", "shop=wholesale") and _ENTERPRISE_NAME.search(name):
         bt = BizType("enterprise", bt.label, 3, _ENT)
@@ -491,6 +492,44 @@ def _gap(key: str, label: str, detail: str) -> dict[str, str]:
     return {"key": key, "label": label, "detail": detail}
 
 
+_COLLEGE_SERVICES = ("website", "crm", "erp", "ai", "marketing")
+LOW_VALUE = re.compile(r"fast food|kiosk|tea|juice|grocery|convenience|provision|mobile|gift|stationery|xerox|photocopy|tailor|"
+                       r"cobbler|laundry|bicycle|pan shop|vegetable|fruit|meat|fish|chicken|egg", re.I)
+
+
+def _quality(p: Prospect, tier: int, usable_phone: bool) -> tuple[str, list[str]]:
+    """How established the business looks: established | good | small. Only listing facts are used."""
+    pts, why = 0.0, []
+    kind = f"{p.type_label} {(p.raw_tags or {}).get('overture:category', '')}"
+    if p.segment in ("enterprise", "college"):
+        pts += 3
+        why.append("larger organisation")
+    elif tier >= 3:
+        pts += 3
+        why.append("high-value business type")
+    elif tier == 2:
+        pts += 1.5
+    if LOW_VALUE.search(kind):
+        pts -= 2
+        why.append("small-ticket business type")
+    for ok, label, w in ((p.address, "full address", 1), (p.email, "email", 1), (p.social_links, "social media page", 1),
+                         (p.opening_hours, "opening hours", 0.5), (p.has_website, "has a website", 1), (p.phone_verified, "phone confirmed", 1)):
+        if ok:
+            pts += w
+            why.append(label)
+    conf = float((p.raw_tags or {}).get("overture:confidence") or 0)
+    if conf >= 0.7:
+        pts += 1
+        why.append(f"listing confidence {conf:.2f}")
+    elif conf and conf < 0.4:
+        pts -= 1
+        why.append(f"low listing confidence {conf:.2f}")
+    if not usable_phone:
+        pts -= 1
+    level = "established" if pts >= 6 else "good" if pts >= 3.5 else "small"
+    return level, why
+
+
 def evaluate(p: Prospect) -> None:
     """Recompute gaps, recommended services, score and reasons for a prospect."""
     gaps: list[dict[str, str]] = []
@@ -498,8 +537,15 @@ def evaluate(p: Prospect) -> None:
     services: list[str] = []
     score = 0.0
     bt = TYPES.get(p.business_type)
+    if bt is None and (p.business_type or "").startswith("overture="):
+        from app.overture import classify as _ov_classify
+
+        c = _ov_classify((p.raw_tags or {}).get("overture:category") or p.business_type.split("=", 1)[1], None, None)
+        bt = c[1] if c else None
     if p.segment == "enterprise":
         tier, base_services = 3, list(_ENT)
+    elif p.segment == "college":
+        tier, base_services = 3, list(_COLLEGE_SERVICES)
     else:
         tier = bt.tier if bt else 1
         base_services = list(bt.services) if bt else ["website", "marketing"]
@@ -593,7 +639,17 @@ def evaluate(p: Prospect) -> None:
         need.insert(0, "active on social media but no website: has customers online, likely no team or know-how to grow it")
     if social_activity in ("very_active", "some"):
         need.insert(0, f"owner checked: {'very active' if social_activity == 'very_active' else 'some activity'} on social media")
-    if not p.has_website and usable_phone and social_activity != "inactive" and (p.social_links or social_activity in ("very_active", "some")):
+    audit_gaps_keys = {g.get("key") for g in ((p.audit or {}).get("gaps") or [])}
+    if p.has_website and p.audited_at:
+        if "unreachable" in audit_gaps_keys or len(audit_gaps_keys) >= 3:
+            need.insert(0, "website is broken or weak: " + ", ".join(g["label"].lower() for g in (p.audit or {}).get("gaps", [])[:4]))
+    if p.has_website and not p.audited_at:
+        level = "check_site"
+    elif p.has_website and ("unreachable" in audit_gaps_keys or len(audit_gaps_keys) >= 3):
+        level = "upgrade"
+    elif p.has_website:
+        level = "maybe"
+    elif not p.has_website and usable_phone and social_activity != "inactive" and (p.social_links or social_activity in ("very_active", "some")):
         level = "definite"  # they already market themselves online — we can do it properly for them
     elif not p.has_website and usable_phone and active and (tier >= 2 or p.segment == "enterprise"):
         level = "definite"
@@ -602,9 +658,10 @@ def evaluate(p: Prospect) -> None:
     else:
         level = "maybe"
     p.need_level, p.need_reasons = level, need
+    p.quality_level, p.quality_reasons = _quality(p, tier, usable_phone)
 
     # Bigger firms lead with ERP/SAP/CRM; small ones lead with the gap (website, SEO, ...).
-    services = base_services + services if p.segment == "enterprise" else services + base_services
+    services = base_services + services if p.segment in ("enterprise", "college") else services + base_services
     seen: list[str] = []
     for s in services:
         if s in SERVICE_KEYS and s not in seen:
@@ -623,7 +680,7 @@ _TYPE_FILTERS = [
     '["office"~"^(lawyer|accountant|tax_advisor|architect|estate_agent|insurance|financial_advisor|financial|consulting|notary|surveyor|travel_agent|educational_institution|company|coworking|logistics)$"]',
     '["craft"]',
     '["healthcare"~"^(doctor|dentist|clinic|hospital|physiotherapist|optometrist|alternative|laboratory)$"]',
-    '["amenity"~"^(restaurant|cafe|fast_food|clinic|doctors|dentist|hospital|veterinary|driving_school|language_school|kindergarten|school|pharmacy)$"]',
+    '["amenity"~"^(restaurant|cafe|fast_food|clinic|doctors|dentist|hospital|veterinary|driving_school|language_school|kindergarten|school|college|university|pharmacy)$"]',
     '["tourism"~"^(hotel|guest_house|hostel|motel)$"]',
     '["leisure"~"^(fitness_centre|sports_centre|dance)$"]',
     '["industrial"]',
@@ -672,6 +729,9 @@ def upsert(db: Session, pp: ParsedProspect, area: str, country: str | None) -> t
     p.area = area
     p.country = country or ({"IN": "India"}.get(country_tag or "") if country_tag else None)
     p.address, p.lat, p.lon = _address(pp.tags), pp.lat, pp.lon
+    from app.geo_states import state_from_area, state_from_code
+
+    p.state = state_from_code(pp.tags.get("addr:state")) or (state_from_area(area) if (p.country in (None, "India")) else None)
     p.phone, p.email, p.website, p.social_links = pp.phone, pp.email, pp.website, pp.social
     p.opening_hours = pp.tags.get("opening_hours")
     if p.has_website != bool(pp.website) or (pp.website and (p.audit or {}).get("url") not in (None, pp.website)):
@@ -688,11 +748,14 @@ def upsert(db: Session, pp: ParsedProspect, area: str, country: str | None) -> t
 class SearchRules:
     only_no_website: bool = True  # businesses with a website already have a developer
     require_phone: bool = True  # must list a phone number that passes the format check
+    only_with_website: bool = False  # "website upgrade" searches
 
     def keep(self, pp: ParsedProspect, country: str | None) -> str | None:
         """Return None to keep, or the reason it was dropped."""
-        if self.only_no_website and pp.website:
+        if self.only_no_website and pp.website and pp.biz.segment != "college":
             return "has a website"
+        if self.only_with_website and not pp.website:
+            return "no website (this search is for upgrades)"
         if self.require_phone:
             _, kind = check_phone(pp.phone, country)
             if kind in (None, "invalid", "toll_free"):
@@ -1069,17 +1132,28 @@ def pitch(p: Prospect) -> dict[str, Any]:
     }
 
 
-STATUSES = ("new", "shortlisted", "contacted", "interested", "not_interested", "won", "rejected")
-FOLLOW_UP_DAYS = {"contacted": 3, "interested": 2}
+STATUSES = ("new", "shortlisted", "contacted", "no_answer", "callback", "interested", "qualified", "proposal", "won", "not_interested", "rejected")
+OPEN_STATUSES = ("new", "shortlisted", "contacted", "no_answer", "callback", "interested", "qualified", "proposal")
+FOLLOW_UP_DAYS = {"contacted": 3, "no_answer": 1, "interested": 2, "qualified": 2, "proposal": 3}
+QUALIFY_KEYS = ("needs", "budget", "decision_maker", "timeline", "current_setup", "notes")
 
 
-def record_contact(p: Prospect, channel: str, outcome: str, note: str | None, actor: str) -> None:
+def record_contact(p: Prospect, channel: str, outcome: str, note: str | None, actor: str, *, callback_at=None,
+                   qualification: dict | None = None) -> None:
     now = utcnow()
-    p.contact_log = [*(p.contact_log or []), {"at": now.isoformat(), "channel": channel, "outcome": outcome, "note": note, "by": actor}]
+    entry = {"at": now.isoformat(), "channel": channel, "outcome": outcome, "note": note, "by": actor}
+    if qualification:
+        q = {k: v for k, v in qualification.items() if k in QUALIFY_KEYS and v not in (None, "", [])}
+        p.qualification = {**(p.qualification or {}), **q, "updated_at": now.isoformat()}
+        entry["qualification"] = q
+    p.contact_log = [*(p.contact_log or []), entry]
     p.last_contacted_at = now
-    if channel in ("call", "whatsapp") and outcome in ("interested", "not_interested", "won") and p.phone_normalized:
+    if channel in ("call", "whatsapp") and outcome in ("interested", "qualified", "proposal", "callback", "not_interested", "won") and p.phone_normalized:
         p.phone_verified, p.phone_verified_at = True, now  # they answered on this number
     if outcome in STATUSES:
         p.status = outcome
-    days = FOLLOW_UP_DAYS.get(p.status)
-    p.next_follow_up = now + timedelta(days=days) if days else None
+    if outcome == "callback":
+        p.next_follow_up = callback_at or (now + timedelta(days=1))
+    else:
+        days = FOLLOW_UP_DAYS.get(p.status)
+        p.next_follow_up = now + timedelta(days=days) if days else None

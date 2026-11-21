@@ -325,7 +325,7 @@ def test_exclusions():
     from app.prospects import exclusion_reason as ex
 
     assert ex({}, "OYO 81234 Hotel Sri Lakshmi", "tourism=hotel") == "part of a chain or partner network"
-    assert ex({}, "Sri Krishna Engineering College", "amenity=school") == "college or university"
+    assert ex({}, "Sri Krishna Engineering College", "amenity=school") is None  # colleges are listed (owner, 2026-11-22)
     assert ex({}, "Sanrad Infotech", "office=company") == "IT / software company"
     assert ex({}, "TTDC Hotel Tamil Nadu", "tourism=hotel") == "government"
     assert ex({"brand": "X"}, "Any Shop", "shop=clothes") == "part of a chain or brand"
@@ -346,7 +346,10 @@ def test_need_levels():
     assert mk(address=None).need_level == "likely"  # no sign it is active
     assert mk(business_type="shop=gift", segment="small_business").need_level == "likely"  # low-value type
     assert mk(phone="123").need_level == "maybe"
-    assert mk(has_website=True, website="https://x.example").need_level == "maybe"
+    assert mk(has_website=True, website="https://x.example").need_level == "check_site"
+    weak = mk(has_website=True, website="https://x.example", audited_at=__import__("datetime").datetime(2026, 11, 22),
+              audit={"gaps": [{"key": "no_https", "label": "Not secure"}, {"key": "not_mobile", "label": "Not mobile"}, {"key": "no_form", "label": "No form"}]})
+    assert weak.need_level == "upgrade" and "website is broken or weak" in weak.need_reasons[0]
 
 
 def test_need_filter_api(client, db, web, monkeypatch):
@@ -364,18 +367,23 @@ def test_need_filter_api(client, db, web, monkeypatch):
 def test_analyse_headlines():
     from app.big_projects import analyse
 
-    m = analyse("Waaree Transpower bags over ₹100 crore NTPC order for battery storage project", "")
-    assert m.project_type == "contract_won" and m.company == "Waaree Transpower" and m.amount.startswith("₹100")
+    m = analyse("Kovai Medical Centre opens new 300-bed hospital in Coimbatore with ₹120 crore investment", "")
+    assert m.sector == "Healthcare" and m.state == "Tamil Nadu" and m.company == "Kovai Medical Centre"
+    assert any("mid-size" in r for r in m.reasons) and "booking" in m.fit.lower()
     m = analyse("Ashok Leyland to set up truck plant near Hosur", "")
-    assert m.project_type == "new_facility" and m.location == "Hosur" and any("Tamil Nadu" in r for r in m.reasons)
+    assert m.sector == "Manufacturing & logistics" and m.state == "Tamil Nadu"
+    # tenders / government / infra and market news are not for us
+    assert analyse("Waaree Transpower bags ₹100 crore NTPC order for battery storage project", "") is None
+    assert analyse("L&T wins highway EPC contract in Tamil Nadu", "") is None
+    assert analyse("Govt to set up new hospital in Madurai under state scheme", "") is None
     assert analyse("PMK urges Tamil Nadu govt. to secure interim stay on HC order", "") is None
     assert analyse("Sensex jumps 500 points as banks rally", "") is None
     assert analyse("Weather update for Chennai", "Rain likely") is None
 
 
 RSS = """<?xml version="1.0"?><rss version="2.0"><channel><title>t</title>
-<item><title>Kovai Pumps bags ₹250 crore order from Saudi utility</title><link>https://news.example/a</link>
-<description>The Coimbatore-based firm will deliver over two years.</description><pubDate>{d}</pubDate></item>
+<item><title>Kovai Hospitals opens new 200-bed hospital in Coimbatore</title><link>https://news.example/a</link>
+<description>The ₹150 crore hospital was built by Shanmuga Constructions and designed by Arch Studio.</description><pubDate>{d}</pubDate></item>
 <item><title>Sensex falls 300 points</title><link>https://news.example/b</link><description>x</description><pubDate>{d}</pubDate></item>
 </channel></rss>"""
 
@@ -396,21 +404,29 @@ def test_big_projects_api(client, web):
     assert client.post("/api/big-projects/find").json()["new"] == 0  # no duplicates
     items = client.get("/api/big-projects").json()["items"]
     lead = items[0]
-    assert lead["company"] == "Kovai Pumps" and lead["location"] == "Coimbatore" and lead["url"] == "https://news.example/a"
-    assert client.get("/api/big-projects", params={"near": "tamil_nadu"}).json()["total"] == 1
+    assert lead["company"] == "Kovai Hospitals" and lead["state"] == "Tamil Nadu" and lead["url"] == "https://news.example/a"
+    assert client.get("/api/big-projects", params={"state": "Tamil Nadu"}).json()["total"] == 1
     a = client.get(f"/api/big-projects/{lead['id']}/approach").json()
-    assert "Kovai Pumps" in a["message"] and "Nothing is sent" in " ".join(a["how_to"])
+    assert "Kovai Hospitals" in a["message"] and "Nothing is sent" in " ".join(a["how_to"])
+    r = client.post(f"/api/big-projects/{lead['id']}/contact", json={"channel": "intro", "outcome": "contacted", "note": "via architect"}).json()
+    assert r["status"] == "contacted" and r["next_follow_up"] and r["contact_log"][0]["note"] == "via architect"
+    assert client.get("/api/big-projects/summary").json()["by_state"] == {"Tamil Nadu": 1}
+    assert "Kovai Hospitals" in client.get("/api/big-projects/export.csv").text
     assert client.patch(f"/api/big-projects/{lead['id']}", json={"status": "rejected"}).json()["status"] == "rejected"
     assert client.get("/api/big-projects").json()["total"] == 0
     assert client.get("/api/big-projects/summary").json()["last_run"]["new"] == 0
 
 
-def test_project_winner_and_it_skip():
-    from app.big_projects import analyse
+def test_project_links_and_it_skip():
+    from app.big_projects import analyse, extract_links
 
-    assert analyse("JNPA awards 8-yr contract to Gateway Distriparks for rail yard operations", "").company == "Gateway Distriparks"
-    assert analyse("Aurionpro secures ₹100 crore order from global hyperscaler", "") is None
-    assert analyse("Infosys wins $1.5 billion deal from European bank", "") is None
+    links = extract_links("The hospital was built by Shanmuga Constructions. It was designed by Arch Studio Chennai. "
+                          "The project is in partnership with Kauvery Labs.", "https://news.example/a", "Kovai Hospitals")
+    assert [(x["company"], x["role"]) for x in links] == [("Shanmuga Constructions", "builder / contractor"),
+                                                          ("Arch Studio Chennai", "designer / architect"), ("Kauvery Labs", "partner")]
+    assert all(x["quote"] and x["confirmed"] is None for x in links)  # evidence kept; unconfirmed until the owner checks
+    assert analyse("Aurionpro opens new office campus in Chennai", "") is None
+    assert analyse("Infosys to set up new campus in Coimbatore", "") is None
 
 
 def test_dealers_allowed_but_chains_not():

@@ -16,8 +16,8 @@ from app.config import get_settings
 from app.db import utcnow
 from app.models import Prospect, ProspectRun
 from app.profile import SERVICE_KEYS
-from app.prospects import AREA_GROUPS, AREAS, REGIONS, SearchRules, audit_website, evaluate, pitch, record_contact, resolve_area
-from app.schemas import MapScanIn, OvertureScanIn, Page, ProspectContactIn, ProspectOut, ProspectRunOut, ProspectSearchIn, ProspectUpdate
+from app.prospects import AREA_GROUPS, AREAS, OPEN_STATUSES, REGIONS, SearchRules, audit_website, evaluate, pitch, record_contact, resolve_area
+from app.schemas import CheckWebsitesIn, MapScanIn, OvertureScanIn, Page, ProspectContactIn, ProspectOut, ProspectRunOut, ProspectSearchIn, ProspectUpdate
 from app.settings_store import get_setting, log_activity
 
 router = APIRouter(tags=["prospects"])
@@ -44,12 +44,20 @@ def _get(db: Session, pid: int) -> Prospect:
     return p
 
 
-def _filtered(q, segment, status, area, country, has_website, service, min_score, phone=None, need=None):
+def _filtered(q, segment, status, area, country, has_website, service, min_score, phone=None, need=None, state=None, quality=None):
     stmt = select(Prospect)
+    if quality == "established":
+        stmt = stmt.where(Prospect.quality_level == "established")
+    elif quality == "good":
+        stmt = stmt.where(Prospect.quality_level.in_(("established", "good")))
+    if state:
+        stmt = stmt.where(Prospect.state.is_(None) if state == "unknown" else Prospect.state == state)
     if need == "definite":
         stmt = stmt.where(Prospect.need_level == "definite")
     elif need == "likely":
         stmt = stmt.where(Prospect.need_level.in_(("definite", "likely")))
+    elif need in ("upgrade", "check_site"):
+        stmt = stmt.where(Prospect.need_level == need)
     if phone == "verified":
         stmt = stmt.where(Prospect.phone_verified.is_(True))
     elif phone == "mobile":
@@ -63,7 +71,7 @@ def _filtered(q, segment, status, area, country, has_website, service, min_score
         if val:
             stmt = stmt.where(col == val)
     if status == "open":
-        stmt = stmt.where(Prospect.status.in_(("new", "shortlisted", "contacted", "interested")))
+        stmt = stmt.where(Prospect.status.in_(OPEN_STATUSES))
     elif status:
         stmt = stmt.where(Prospect.status == status)
     if has_website is not None:
@@ -78,7 +86,7 @@ def _filtered(q, segment, status, area, country, has_website, service, min_score
 @router.get("/prospects", response_model=Page[ProspectOut])
 def list_prospects(
     q: str | None = None,
-    segment: str | None = Query(None, pattern="^(small_business|professional|enterprise)$"),
+    segment: str | None = Query(None, pattern="^(small_business|professional|enterprise|college)$"),
     status: str | None = None,
     area: str | None = None,
     country: str | None = None,
@@ -86,12 +94,14 @@ def list_prospects(
     service: str | None = None,
     min_score: float | None = None,
     phone: str | None = Query(None, pattern="^(verified|mobile|usable)$"),
-    need: str | None = Query(None, pattern="^(definite|likely)$"),
+    need: str | None = Query(None, pattern="^(definite|likely|upgrade|check_site)$"),
+    state: str | None = None,
+    quality: str | None = Query(None, pattern="^(established|good)$"),
     sort: str = Query("score", pattern="^(score|newest|follow_up|name)$"),
     paging: Paging = Depends(),
     db: Session = DB,
 ):
-    stmt = _filtered(q, segment, status, area, country, has_website, service, min_score, phone, need)
+    stmt = _filtered(q, segment, status, area, country, has_website, service, min_score, phone, need, state, quality)
     if sort == "follow_up":
         stmt = stmt.where(Prospect.next_follow_up.is_not(None))
     stmt = stmt.order_by(SORTS[sort], Prospect.id.desc())
@@ -103,14 +113,15 @@ def list_prospects(
 def map_points(
     min_lat: float = Query(..., ge=-90, le=90), min_lon: float = Query(..., ge=-180, le=180),
     max_lat: float = Query(..., ge=-90, le=90), max_lon: float = Query(..., ge=-180, le=180),
-    segment: str | None = Query(None, pattern="^(small_business|professional|enterprise)$"),
-    status: str | None = None, need: str | None = Query(None, pattern="^(definite|likely)$"),
+    segment: str | None = Query(None, pattern="^(small_business|professional|enterprise|college)$"),
+    status: str | None = None, need: str | None = Query(None, pattern="^(definite|likely|upgrade|check_site)$"),
+    quality: str | None = Query(None, pattern="^(established|good)$"),
     has_website: bool | None = None, phone: str | None = Query(None, pattern="^(verified|mobile|usable)$"),
-    service: str | None = None, q: str | None = None,
+    service: str | None = None, q: str | None = None, state: str | None = None,
     limit: int = Query(3000, ge=1, le=10000), db: Session = DB,
 ):
     """Compact points for the map view: the best `limit` prospects inside the visible area."""
-    stmt = _filtered(q, segment, status, None, None, has_website, service, None, phone, need).where(
+    stmt = _filtered(q, segment, status, None, None, has_website, service, None, phone, need, state, quality).where(
         Prospect.lat.between(min_lat, max_lat), Prospect.lon.between(min_lon, max_lon))
     total = db.scalar(select(func.count()).select_from(stmt.order_by(None).subquery())) or 0
     # Spread the points over the visible area: split it into a grid and take the best few per cell, so a
@@ -126,6 +137,50 @@ def map_points(
     return {"total": total, "shown": len(rows), "points": [[r.id, round(r.lat, 5), round(r.lon, 5), r.score, r.need_level, r.name] for r in rows]}
 
 
+@router.get("/prospects/next")
+def next_to_call(
+    group: str = Query("no_website", pattern="^(no_website|upgrade|colleges|all)$"),
+    state: str | None = None, quality: str | None = Query("good", pattern="^(established|good|any)$"),
+    need: str | None = Query(None, pattern="^(definite|likely)$"), phone: str | None = Query("usable", pattern="^(mobile|usable)$"),
+    segment: str | None = Query(None, pattern="^(small_business|professional|enterprise|college)$"),
+    exclude: str | None = Query(None, max_length=4000, description="comma-separated ids skipped this session"),
+    db: Session = DB,
+):
+    """The next prospect for the call list: due callbacks / retries first, then the best new one."""
+    skip = [int(x) for x in (exclude or "").split(",") if x.strip().isdigit()][:500]
+    q_level = None if quality == "any" else quality
+
+    def base():
+        stmt = _filtered(None, segment, None, None, None, None, None, None, phone, None, state, q_level)
+        if group == "no_website":
+            stmt = stmt.where(Prospect.has_website.is_(False), Prospect.segment != "college")
+            if need:
+                stmt = _filtered_need(stmt, need)
+        elif group == "upgrade":
+            stmt = stmt.where(Prospect.has_website.is_(True), Prospect.need_level == "upgrade")
+        elif group == "colleges":
+            stmt = stmt.where(Prospect.segment == "college")
+        if skip:
+            stmt = stmt.where(Prospect.id.not_in(skip))
+        return stmt
+
+    now = utcnow()
+    due = db.scalar(base().where(Prospect.status.in_(("callback", "no_answer", "contacted", "interested", "qualified", "proposal")),
+                                 Prospect.next_follow_up <= now).order_by(Prospect.next_follow_up.asc()).limit(1))
+    if due:
+        return {"prospect": ProspectOut.model_validate(due), "reason": "follow-up due", "remaining_new": None}
+    stmt = base().where(Prospect.status.in_(("new", "shortlisted")))
+    nxt = db.scalar(stmt.order_by((Prospect.status == "shortlisted").desc(), Prospect.score.desc(), Prospect.id).limit(1))
+    remaining = db.scalar(select(func.count()).select_from(stmt.order_by(None).subquery())) or 0
+    return {"prospect": ProspectOut.model_validate(nxt) if nxt else None, "reason": "new" if nxt else None, "remaining_new": remaining}
+
+
+def _filtered_need(stmt, need):
+    if need == "definite":
+        return stmt.where(Prospect.need_level == "definite")
+    return stmt.where(Prospect.need_level.in_(("definite", "likely")))
+
+
 @router.get("/prospects/summary")
 def prospects_summary(db: Session = DB):
     def grouped(col):
@@ -138,9 +193,15 @@ def prospects_summary(db: Session = DB):
         "hot": db.scalar(select(func.count(Prospect.id)).where(Prospect.score >= 70, Prospect.status.in_(("new", "shortlisted")))) or 0,
         "follow_ups_due": db.scalar(select(func.count(Prospect.id)).where(Prospect.next_follow_up.is_not(None), Prospect.next_follow_up <= now)) or 0,
         "by_segment": grouped(Prospect.segment),
-        "definite": db.scalar(select(func.count(Prospect.id)).where(Prospect.need_level == "definite", Prospect.status.in_(("new", "shortlisted", "contacted", "interested")))) or 0,
+        "definite": db.scalar(select(func.count(Prospect.id)).where(Prospect.need_level == "definite", Prospect.status.in_(OPEN_STATUSES))) or 0,
+        "by_need": {k or "unknown": v for k, v in db.execute(select(Prospect.need_level, func.count()).where(Prospect.status.in_(OPEN_STATUSES)).group_by(Prospect.need_level)).all()},
+        "by_quality": {k or "unknown": v for k, v in db.execute(select(Prospect.quality_level, func.count()).where(Prospect.status.in_(OPEN_STATUSES)).group_by(Prospect.quality_level)).all()},
+        "calls_today": _calls_today(db),
         "by_status": grouped(Prospect.status),
         "by_area": grouped(Prospect.area),
+        "by_state": {k or "unknown": v for k, v in db.execute(
+            select(Prospect.state, func.count()).where(Prospect.status.in_(OPEN_STATUSES))
+            .group_by(Prospect.state).order_by(func.count().desc())).all()},
         "services": SERVICE_KEYS,
     }
 
@@ -258,6 +319,34 @@ def scan_map_file(body: MapScanIn, db: Session = DB, who: str = Depends(actor)):
     return run
 
 
+def _calls_today(db: Session) -> dict[str, int]:
+    """Contacts logged since local midnight (IST) — for the daily target on the call queue."""
+    from datetime import timedelta
+
+    ist_midnight = (utcnow() + timedelta(hours=5, minutes=30)).replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(hours=5, minutes=30)
+    rows = db.scalars(select(Prospect).where(Prospect.last_contacted_at >= ist_midnight)).all()
+    out = {"total": 0}
+    for p in rows:
+        for c in p.contact_log or []:
+            if c.get("at", "") >= ist_midnight.isoformat():
+                out["total"] += 1
+                out[c.get("outcome", "other")] = out.get(c.get("outcome", "other"), 0) + 1
+    return out
+
+
+@router.post("/prospects/check-websites", response_model=ProspectRunOut, status_code=202)
+def check_websites(body: CheckWebsitesIn, db: Session = DB, who: str = Depends(actor)):
+    """Check the homepages of businesses that have a website, best first, to find who needs an upgrade."""
+    _busy(db)
+    run = ProspectRun(areas=[f"Website check: {body.limit}"], status="running", log=[])
+    db.add(run)
+    log_activity(db, "prospect_run", None, "check_websites", body.model_dump(), who)
+    db.commit()
+    jobs.submit_website_checks(run.id, limit=body.limit, state=body.state, segment=body.segment)
+    db.refresh(run)
+    return run
+
+
 def _busy(db: Session) -> None:
     if db.scalar(select(ProspectRun).where(ProspectRun.status.in_(("running", "stopping")))):
         raise HTTPException(409, "A prospect search is already running")
@@ -303,12 +392,12 @@ def scan_overture(body: OvertureScanIn, db: Session = DB, who: str = Depends(act
         except ValueError as exc:
             raise HTTPException(422, str(exc)) from exc
     _busy(db)
-    run = ProspectRun(areas=[f"Overture: {body.file}"], status="running", log=[])
+    run = ProspectRun(areas=[f"Overture ({body.mode.replace('_', ' ')}): {body.file}"], status="running", log=[])
     db.add(run)
     log_activity(db, "prospect_run", None, "overture_scan", body.model_dump(), who)
     db.commit()
     jobs.submit_overture(run.id, "scan", path=str(path), max_keep=body.max_keep, min_confidence=body.min_confidence,
-                         cities=body.cities, radius_km=body.radius_km, rules=_rules(db))
+                         cities=body.cities, radius_km=body.radius_km, rules=_rules(db), mode=body.mode)
     db.refresh(run)
     return run
 
@@ -316,14 +405,15 @@ def scan_overture(body: OvertureScanIn, db: Session = DB, who: str = Depends(act
 @router.get("/prospects/export.csv")
 def export_csv(
     segment: str | None = None, status: str | None = None, area: str | None = None, has_website: bool | None = None,
-    service: str | None = None, min_score: float | None = None, phone: str | None = None, need: str | None = None, db: Session = DB,
+    service: str | None = None, min_score: float | None = None, phone: str | None = None, need: str | None = None,
+    state: str | None = None, quality: str | None = None, db: Session = DB,
 ):
-    rows = db.scalars(_filtered(None, segment, status, area, None, has_website, service, min_score, phone, need).order_by(Prospect.score.desc()).limit(5000)).all()
+    rows = db.scalars(_filtered(None, segment, status, area, None, has_website, service, min_score, phone, need, state, quality).order_by(Prospect.score.desc()).limit(5000)).all()
     buf = io.StringIO()
     w = csv.writer(buf)
-    w.writerow(["name", "type", "segment", "need", "area", "country", "score", "status", "phone", "phone_checked", "phone_type", "phone_confirmed", "email", "website", "address", "gaps", "services", "source"])
+    w.writerow(["name", "type", "segment", "need", "quality", "area", "state", "country", "score", "status", "phone", "phone_checked", "phone_type", "phone_confirmed", "email", "website", "address", "gaps", "services", "source"])
     for p in rows:
-        w.writerow([p.name, p.type_label, p.segment, p.need_level, p.area, p.country, p.score, p.status, p.phone, p.phone_normalized, p.phone_type, "yes" if p.phone_verified else "no", p.email, p.website, p.address,
+        w.writerow([p.name, p.type_label, p.segment, p.need_level, p.quality_level, p.area, p.state, p.country, p.score, p.status, p.phone, p.phone_normalized, p.phone_type, "yes" if p.phone_verified else "no", p.email, p.website, p.address,
                     "; ".join(g["label"] for g in p.gaps or []), "; ".join(SERVICE_KEYS.get(s, s) for s in p.recommended_services or []), p.source_url])
     return StreamingResponse(iter([buf.getvalue()]), media_type="text/csv",
                              headers={"Content-Disposition": "attachment; filename=prospects.csv"})
@@ -395,7 +485,7 @@ def set_social_activity(pid: int, activity: str | None = Query(None, pattern="^(
 @router.post("/prospects/{pid}/contact", response_model=ProspectOut)
 def log_contact(pid: int, body: ProspectContactIn, db: Session = DB, who: str = Depends(actor)):
     p = _get(db, pid)
-    record_contact(p, body.channel, body.outcome, body.note, who)
+    record_contact(p, body.channel, body.outcome, body.note, who, callback_at=body.callback_at, qualification=body.qualification)
     log_activity(db, "prospect", p.id, "contact_logged", body.model_dump(), who)
     db.commit()
     return p

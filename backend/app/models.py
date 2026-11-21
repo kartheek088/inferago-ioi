@@ -594,6 +594,7 @@ class Prospect(TimestampMixin, Base):
     business_type: Mapped[str] = mapped_column(String(80), index=True)  # e.g. "dentist"
     type_label: Mapped[str] = mapped_column(String(120))
     area: Mapped[str | None] = mapped_column(String(100), index=True)  # search area it was found in
+    state: Mapped[str | None] = mapped_column(String(60), index=True)  # from the listing's region or a listed city within 40 km
     country: Mapped[str | None] = mapped_column(String(100), index=True)
     address: Mapped[str | None] = mapped_column(Text)
     lat: Mapped[float | None] = mapped_column(Float)
@@ -618,8 +619,11 @@ class Prospect(TimestampMixin, Base):
     audited_at: Mapped[datetime | None] = mapped_column(DateTime)
     score: Mapped[float] = mapped_column(Float, default=0.0, index=True)
     score_reasons: Mapped[list[str]] = mapped_column(JSON, default=list)
-    need_level: Mapped[str | None] = mapped_column(String(20), index=True)  # definite | likely | maybe
+    need_level: Mapped[str | None] = mapped_column(String(20), index=True)  # definite | likely | upgrade | check_site | maybe
     need_reasons: Mapped[list[str]] = mapped_column(JSON, default=list)
+    quality_level: Mapped[str | None] = mapped_column(String(20), index=True)  # established | good | small
+    quality_reasons: Mapped[list[str]] = mapped_column(JSON, default=list)
+    qualification: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)  # needs, budget, decision_maker, timeline (from calls)
     status: Mapped[str] = mapped_column(String(30), default="new", index=True)
     notes: Mapped[str | None] = mapped_column(Text)
     last_contacted_at: Mapped[datetime | None] = mapped_column(DateTime)
@@ -662,8 +666,49 @@ class ProjectLead(TimestampMixin, Base):
     project_type: Mapped[str] = mapped_column(String(30), index=True)  # contract_won | new_facility | investment | mou
     amount_text: Mapped[str | None] = mapped_column(String(100))
     location: Mapped[str | None] = mapped_column(String(100), index=True)  # only if named in the text
+    state: Mapped[str | None] = mapped_column(String(60), index=True)  # from a place named in the text
+    fit: Mapped[str | None] = mapped_column(Text)  # how Inferago's services fit this project
+    links: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)  # connected companies [{company, role, quote, url, confirmed}]
+    links_checked_at: Mapped[datetime | None] = mapped_column(DateTime)
+    contact_log: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    last_contacted_at: Mapped[datetime | None] = mapped_column(DateTime)
+    next_follow_up: Mapped[datetime | None] = mapped_column(DateTime, index=True)
     services: Mapped[list[str]] = mapped_column(JSON, default=list)
     score: Mapped[float] = mapped_column(Float, default=0.0, index=True)
     score_reasons: Mapped[list[str]] = mapped_column(JSON, default=list)
     status: Mapped[str] = mapped_column(String(30), default="new", index=True)
     notes: Mapped[str | None] = mapped_column(Text)
+
+
+class BusinessChain(TimestampMixin, Base):
+    """A local / regional business with several branches (found by grouping directory listings).
+
+    Evidence is kept: branches that share a phone number, social page or website, or the same
+    name + category in one state. One deal can cover every branch (CRM, billing, website).
+    """
+
+    __tablename__ = "business_chains"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    key: Mapped[str] = mapped_column(String(200), unique=True)  # normalised name
+    name: Mapped[str] = mapped_column(String(300))
+    type_label: Mapped[str] = mapped_column(String(120))
+    segment: Mapped[str] = mapped_column(String(40))
+    branch_count: Mapped[int] = mapped_column(Integer, index=True)
+    cities: Mapped[list[str]] = mapped_column(JSON, default=list)
+    states: Mapped[list[str]] = mapped_column(JSON, default=list)
+    main_state: Mapped[str | None] = mapped_column(String(60), index=True)
+    phones: Mapped[list[str]] = mapped_column(JSON, default=list)
+    socials: Mapped[list[str]] = mapped_column(JSON, default=list)
+    has_website: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    evidence: Mapped[str] = mapped_column(String(40))  # shared_contact | same_name_one_state
+    evidence_detail: Mapped[str | None] = mapped_column(Text)
+    branches: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)  # up to 30: name, address, city, phone, lat, lon, source_url
+    services: Mapped[list[str]] = mapped_column(JSON, default=list)
+    score: Mapped[float] = mapped_column(Float, default=0.0, index=True)
+    score_reasons: Mapped[list[str]] = mapped_column(JSON, default=list)
+    status: Mapped[str] = mapped_column(String(30), default="new", index=True)
+    notes: Mapped[str | None] = mapped_column(Text)
+    contact_log: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    last_contacted_at: Mapped[datetime | None] = mapped_column(DateTime)
+    next_follow_up: Mapped[datetime | None] = mapped_column(DateTime, index=True)

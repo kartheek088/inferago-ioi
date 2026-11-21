@@ -68,6 +68,7 @@ from app.prospects import BizType, _ENT, _APPT, _PRO, _RETAIL  # noqa: E402
 
 # (regex on "category basic_category hierarchy", segment, label, tier, services, dealer_shop)
 _RULES: list[tuple[str, str, str, int, tuple[str, ...], str | None]] = [
+    (r"college|university|polytechnic|institute_of", "college", "College / university", 3, ("website", "crm", "erp", "ai", "marketing"), None),
     (r"dentist|dental", "professional", "Dentist", 3, _APPT, None),
     (r"hospital", "small_business", "Hospital", 3, ("website", "crm", "ai", "erp", "marketing"), None),
     (r"doctor|physician|clinic|medical_center|pediatric|gynecolog|dermatolog|orthop|ayurved|homeopath|physiotherap|diagnostic|laborator",
@@ -113,7 +114,7 @@ _RULES: list[tuple[str, str, str, int, tuple[str, ...], str | None]] = [
     (r"store|shop|shopping|retail|market", "small_business", "Shop", 1, _RETAIL, None),
 ]
 _SKIP_CATEGORY = re.compile(
-    r"college|university|government|public_service|civic|religio|place_of_worship|temple|church|mosque|gurdwara|(?:^|[\s_])atm(?:$|[\s_])|(?:^|[\s_])bank(?:$|[\s_])|"
+    r"government|public_service|civic|religio|place_of_worship|temple|church|mosque|gurdwara|(?:^|[\s_])atm(?:$|[\s_])|(?:^|[\s_])bank(?:$|[\s_])|"
     r"credit_union|information_technology|it_service|software|web_design|web_develop|computer_programm|telecom|internet_service|"
     r"political|embassy|police|post_office|military|toilet|parking|bus_station|train_station|airport|landmark|(?:^|[\s_])park(?:$|[\s_])|natural|"
     r"monument|cemetery|structure_and_geography|road|bridge|charity|non_profit|(?:^|[\s_])ngo(?:$|[\s_])|community_center|library|"
@@ -152,8 +153,6 @@ def extra_exclusion(name: str, label: str, segment: str) -> str | None:
 
     if _SKIP_NAME.search(name):
         return "government or public place"
-    if label in _EDU_LIKE and _COLLEGE_NAMES.search(name):
-        return "college or university"
     if _STRONG_IT.search(name) and label != "Vehicle dealer":
         return "IT / software company"
     if _BANK.search(name) and not _NOT_A_BANK.search(name) and label not in ("School", "Hospital"):
@@ -172,6 +171,10 @@ def to_parsed(row: dict):
     if c is None:
         return None
     key, biz, dealer_shop = c
+    from app.prospects import _COLLEGE_NAMES
+
+    if biz.label in ("School", "Coaching / training") and _COLLEGE_NAMES.search(name):
+        biz = BizType("college", "College / university", 3, ("website", "crm", "erp", "ai", "marketing"))
     websites = [w for w in (row.get("websites") or []) if w]
     socials = [w for w in (row.get("socials") or []) if w]
     real_sites = [w for w in websites if not _is_social(w)]
@@ -179,7 +182,7 @@ def to_parsed(row: dict):
     tags = {"name": name, "addr:full": row.get("address") or "", "addr:city": row.get("locality") or "",
             "addr:postcode": row.get("postcode") or "", "overture:category": row.get("category") or row.get("basic_category") or "",
             "overture:confidence": str(round(row.get("confidence") or 0, 2)), "overture:dataset": row.get("dataset") or "",
-            "overture:country": row.get("country") or ""}
+            "overture:country": row.get("country") or "", "addr:state": row.get("region") or ""}
     if row.get("brand"):
         tags["brand"] = row["brand"]
     if dealer_shop:
@@ -199,7 +202,7 @@ def to_parsed(row: dict):
 
 
 def run_overture_scan(db, run, path: str, *, max_keep: int, min_confidence: float = 0.3, cities: list[str] | None = None,
-                      radius_km: float = 15.0, rules=None):
+                      radius_km: float = 15.0, rules=None, mode: str = "no_website"):
     from app.db import utcnow
     from app.prospects import SearchRules, _dropped_text, _km, _place_name, nearest_city, resolve_area, upsert
 
@@ -215,12 +218,20 @@ def run_overture_scan(db, run, path: str, *, max_keep: int, min_confidence: floa
     try:
         import duckdb
 
-        log(f"Reading {Path(path).name}. This usually takes 1–5 minutes…")
+        log(f"Reading {Path(path).name} ({ {'no_website': 'businesses without a website', 'upgrade': 'businesses whose website may need an upgrade', 'colleges': 'colleges and universities'}.get(mode, mode)}). This usually takes 1–5 minutes…")
         con = duckdb.connect()
         where = [f"confidence >= {float(min_confidence)}", "country = 'IN'"]  # the download box also covers neighbours
-        if rules.only_no_website:
-            where.append("(websites IS NULL OR len(list_filter(websites, lambda w: NOT regexp_matches(lower(w), "
-                         "'facebook\\.com|instagram\\.com|fb\\.com|youtube\\.com|linkedin\\.com|wa\\.me|linktr\\.ee|justdial\\.com|indiamart\\.com|sulekha\\.com'))) = 0)")
+        real_sites = ("len(list_filter(coalesce(websites, []), lambda w: NOT regexp_matches(lower(w), "
+                      "'facebook\\.com|instagram\\.com|fb\\.com|youtube\\.com|linkedin\\.com|wa\\.me|linktr\\.ee|justdial\\.com|indiamart\\.com|sulekha\\.com')))")
+        is_college = "regexp_matches(lower(coalesce(category, '') || ' ' || coalesce(basic_category, '')), 'college|university')"
+        if mode == "colleges":
+            where.append(is_college)
+            rules.only_no_website = False
+        elif mode == "upgrade":
+            where.append(f"{real_sites} > 0")
+            rules.only_no_website, rules.only_with_website = False, True
+        elif rules.only_no_website:
+            where.append(f"({real_sites} = 0 OR {is_college})")
         if centres:
             boxes = []
             for _, lat, lon, _c in centres:
