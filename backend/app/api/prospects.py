@@ -1,0 +1,319 @@
+"""Prospects: businesses/professionals with potential but weak or no online presence."""
+
+import csv
+import io
+from datetime import UTC, datetime
+from pathlib import Path
+
+from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import StreamingResponse
+from sqlalchemy import func, or_, select
+from sqlalchemy.orm import Session
+
+from app import jobs
+from app.api.deps import DB, Paging, actor, paginate
+from app.config import get_settings
+from app.db import utcnow
+from app.models import Prospect, ProspectRun
+from app.profile import SERVICE_KEYS
+from app.prospects import AREA_GROUPS, AREAS, REGIONS, SearchRules, audit_website, evaluate, pitch, record_contact, resolve_area
+from app.schemas import MapScanIn, Page, ProspectContactIn, ProspectOut, ProspectRunOut, ProspectSearchIn, ProspectUpdate
+from app.settings_store import get_setting, log_activity
+
+router = APIRouter(tags=["prospects"])
+
+def _rules(db: Session) -> SearchRules:
+    return SearchRules(
+        only_no_website=bool(get_setting(db, "prospect_only_no_website")),
+        require_phone=bool(get_setting(db, "prospect_require_phone")),
+    )
+
+
+SORTS = {
+    "score": Prospect.score.desc(),
+    "newest": Prospect.created_at.desc(),
+    "follow_up": Prospect.next_follow_up.asc(),
+    "name": Prospect.name.asc(),
+}
+
+
+def _get(db: Session, pid: int) -> Prospect:
+    p = db.get(Prospect, pid)
+    if not p:
+        raise HTTPException(404, "Prospect not found")
+    return p
+
+
+def _filtered(q, segment, status, area, country, has_website, service, min_score, phone=None, need=None):
+    stmt = select(Prospect)
+    if need == "definite":
+        stmt = stmt.where(Prospect.need_level == "definite")
+    elif need == "likely":
+        stmt = stmt.where(Prospect.need_level.in_(("definite", "likely")))
+    if phone == "verified":
+        stmt = stmt.where(Prospect.phone_verified.is_(True))
+    elif phone == "mobile":
+        stmt = stmt.where(Prospect.phone_type == "mobile")
+    elif phone == "usable":
+        stmt = stmt.where(Prospect.phone_type.in_(("mobile", "landline", "international")))
+    if q:
+        like = f"%{q}%"
+        stmt = stmt.where(or_(Prospect.name.ilike(like), Prospect.type_label.ilike(like), Prospect.address.ilike(like)))
+    for col, val in ((Prospect.segment, segment), (Prospect.area, area), (Prospect.country, country)):
+        if val:
+            stmt = stmt.where(col == val)
+    if status == "open":
+        stmt = stmt.where(Prospect.status.in_(("new", "shortlisted", "contacted", "interested")))
+    elif status:
+        stmt = stmt.where(Prospect.status == status)
+    if has_website is not None:
+        stmt = stmt.where(Prospect.has_website.is_(has_website))
+    if service:
+        stmt = stmt.where(func.json_extract(Prospect.recommended_services, "$").like(f'%"{service}"%'))
+    if min_score is not None:
+        stmt = stmt.where(Prospect.score >= min_score)
+    return stmt
+
+
+@router.get("/prospects", response_model=Page[ProspectOut])
+def list_prospects(
+    q: str | None = None,
+    segment: str | None = Query(None, pattern="^(small_business|professional|enterprise)$"),
+    status: str | None = None,
+    area: str | None = None,
+    country: str | None = None,
+    has_website: bool | None = None,
+    service: str | None = None,
+    min_score: float | None = None,
+    phone: str | None = Query(None, pattern="^(verified|mobile|usable)$"),
+    need: str | None = Query(None, pattern="^(definite|likely)$"),
+    sort: str = Query("score", pattern="^(score|newest|follow_up|name)$"),
+    paging: Paging = Depends(),
+    db: Session = DB,
+):
+    stmt = _filtered(q, segment, status, area, country, has_website, service, min_score, phone, need)
+    if sort == "follow_up":
+        stmt = stmt.where(Prospect.next_follow_up.is_not(None))
+    stmt = stmt.order_by(SORTS[sort], Prospect.id.desc())
+    items, total = paginate(db, stmt, paging)
+    return Page(items=items, total=total, limit=paging.limit, offset=paging.offset)
+
+
+@router.get("/prospects/summary")
+def prospects_summary(db: Session = DB):
+    def grouped(col):
+        return {k or "unknown": v for k, v in db.execute(select(col, func.count()).group_by(col)).all()}
+
+    now = utcnow()
+    return {
+        "total": db.scalar(select(func.count(Prospect.id))) or 0,
+        "no_website": db.scalar(select(func.count(Prospect.id)).where(Prospect.has_website.is_(False))) or 0,
+        "hot": db.scalar(select(func.count(Prospect.id)).where(Prospect.score >= 70, Prospect.status.in_(("new", "shortlisted")))) or 0,
+        "follow_ups_due": db.scalar(select(func.count(Prospect.id)).where(Prospect.next_follow_up.is_not(None), Prospect.next_follow_up <= now)) or 0,
+        "by_segment": grouped(Prospect.segment),
+        "definite": db.scalar(select(func.count(Prospect.id)).where(Prospect.need_level == "definite", Prospect.status.in_(("new", "shortlisted", "contacted", "interested")))) or 0,
+        "by_status": grouped(Prospect.status),
+        "by_area": grouped(Prospect.area),
+        "services": SERVICE_KEYS,
+    }
+
+
+@router.get("/prospects/areas")
+def prospect_areas(db: Session = DB):
+    return {
+        "groups": AREA_GROUPS,
+        "areas": {k: {"country": v[2], "region": v[3]} for k, v in AREAS.items()},
+        "selected": get_setting(db, "prospect_areas"),
+        "radius_m": get_setting(db, "prospect_radius_m"),
+        "max_per_area": get_setting(db, "prospect_max_per_area"),
+        "custom_format": "Name@lat,lon",
+    }
+
+
+@router.get("/prospects/runs", response_model=list[ProspectRunOut])
+def prospect_runs(limit: int = Query(10, ge=1, le=100), db: Session = DB):
+    return db.scalars(select(ProspectRun).order_by(ProspectRun.id.desc()).limit(limit)).all()
+
+
+@router.post("/prospects/find", response_model=ProspectRunOut, status_code=202)
+def find_prospects(body: ProspectSearchIn, db: Session = DB, who: str = Depends(actor)):
+    areas = body.areas or get_setting(db, "prospect_areas") or []
+    if not areas:
+        raise HTTPException(422, "Choose at least one area")
+    for a in areas:
+        try:
+            resolve_area(a)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+    if db.scalar(select(ProspectRun).where(ProspectRun.status.in_(("running", "stopping")))):
+        raise HTTPException(409, "A prospect search is already running")
+    run = ProspectRun(areas=list(areas), status="running", log=[])
+    db.add(run)
+    log_activity(db, "prospect_run", None, "started", {"areas": areas}, who)
+    db.commit()
+    jobs.submit_prospect_search(
+        run.id,
+        radius_m=body.radius_m or int(get_setting(db, "prospect_radius_m") or 3000),
+        max_per_area=body.max_per_area or int(get_setting(db, "prospect_max_per_area") or 80),
+        rules=_rules(db),
+    )
+    db.refresh(run)
+    return run
+
+
+@router.post("/prospects/runs/{run_id}/stop", response_model=ProspectRunOut)
+def stop_run(run_id: int, db: Session = DB, who: str = Depends(actor)):
+    run = db.get(ProspectRun, run_id)
+    if not run:
+        raise HTTPException(404, "Run not found")
+    if run.status == "running":
+        run.status = "stopping"  # the worker stops before the next city
+        log_activity(db, "prospect_run", run.id, "stop_requested", {}, who)
+        db.commit()
+    return run
+
+
+def map_folders() -> dict[str, Path]:
+    """Only these two folders are ever read. The API never accepts a free-form path."""
+    return {"maps": Path(get_settings().upload_dir).parent / "maps", "downloads": Path.home() / "Downloads"}
+
+
+MAP_DOWNLOAD = {
+    "All India (1.7 GB)": "https://download.geofabrik.de/asia/india-latest.osm.pbf",
+    "All India zones (pick one)": "https://download.geofabrik.de/asia/india.html",
+    "Other countries": "https://download.geofabrik.de/",
+}
+
+
+def _still_downloading(f: Path) -> bool:
+    """A file written to in the last 2 minutes is probably still downloading."""
+    import time
+
+    return time.time() - f.stat().st_mtime < 120
+
+
+@router.get("/prospects/map-files")
+def map_files():
+    files = []
+    for key, folder in map_folders().items():
+        if folder.is_dir():
+            for f in sorted(folder.glob("*.osm.pbf")):
+                st = f.stat()
+                files.append({"folder": key, "file": f.name, "path": str(f), "size_mb": round(st.st_size / 1e6, 1),
+                              "modified": datetime.fromtimestamp(st.st_mtime, UTC).replace(tzinfo=None).isoformat(),
+                              "downloading": _still_downloading(f)})
+    return {"files": files, "folders": {k: str(v) for k, v in map_folders().items()}, "download_links": MAP_DOWNLOAD,
+            "regions": list(REGIONS)}
+
+
+@router.post("/prospects/scan-map-file", response_model=ProspectRunOut, status_code=202)
+def scan_map_file(body: MapScanIn, db: Session = DB, who: str = Depends(actor)):
+    folder = map_folders()[body.folder].resolve()
+    path = (folder / body.file).resolve()
+    if path.parent != folder or not path.is_file():
+        raise HTTPException(404, "Map file not found in that folder")
+    if _still_downloading(path):
+        raise HTTPException(409, "This map file is still downloading. Wait until the download finishes, then scan.")
+    for c in body.cities or []:
+        try:
+            resolve_area(c)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+    if db.scalar(select(ProspectRun).where(ProspectRun.status.in_(("running", "stopping")))):
+        raise HTTPException(409, "A prospect search is already running")
+    run = ProspectRun(areas=[f"map file: {body.file}"], status="running", log=[])
+    db.add(run)
+    log_activity(db, "prospect_run", None, "map_scan_started", body.model_dump(), who)
+    db.commit()
+    jobs.submit_map_scan(run.id, str(path), region=body.region, max_keep=body.max_keep, cities=body.cities, radius_km=body.radius_km,
+                         rules=_rules(db))
+    db.refresh(run)
+    return run
+
+
+@router.get("/prospects/export.csv")
+def export_csv(
+    segment: str | None = None, status: str | None = None, area: str | None = None, has_website: bool | None = None,
+    service: str | None = None, min_score: float | None = None, phone: str | None = None, need: str | None = None, db: Session = DB,
+):
+    rows = db.scalars(_filtered(None, segment, status, area, None, has_website, service, min_score, phone, need).order_by(Prospect.score.desc()).limit(5000)).all()
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["name", "type", "segment", "need", "area", "country", "score", "status", "phone", "phone_checked", "phone_type", "phone_confirmed", "email", "website", "address", "gaps", "services", "source"])
+    for p in rows:
+        w.writerow([p.name, p.type_label, p.segment, p.need_level, p.area, p.country, p.score, p.status, p.phone, p.phone_normalized, p.phone_type, "yes" if p.phone_verified else "no", p.email, p.website, p.address,
+                    "; ".join(g["label"] for g in p.gaps or []), "; ".join(SERVICE_KEYS.get(s, s) for s in p.recommended_services or []), p.source_url])
+    return StreamingResponse(iter([buf.getvalue()]), media_type="text/csv",
+                             headers={"Content-Disposition": "attachment; filename=prospects.csv"})
+
+
+@router.get("/prospects/{pid}", response_model=ProspectOut)
+def get_prospect(pid: int, db: Session = DB):
+    return _get(db, pid)
+
+
+@router.patch("/prospects/{pid}", response_model=ProspectOut)
+def update_prospect(pid: int, body: ProspectUpdate, db: Session = DB, who: str = Depends(actor)):
+    p = _get(db, pid)
+    data = body.model_dump(exclude_unset=True)
+    for k, v in data.items():
+        setattr(p, k, v)
+    log_activity(db, "prospect", p.id, "updated", {k: str(v) for k, v in data.items()}, who)
+    db.commit()
+    return p
+
+
+@router.post("/prospects/{pid}/audit", response_model=ProspectOut)
+def audit_prospect(pid: int, db: Session = DB, who: str = Depends(actor)):
+    p = _get(db, pid)
+    try:
+        audit_website(db, p)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    log_activity(db, "prospect", p.id, "website_checked", {"gaps": len((p.audit or {}).get("gaps") or [])}, who)
+    db.commit()
+    return p
+
+
+@router.get("/prospects/{pid}/pitch")
+def prospect_pitch(pid: int, db: Session = DB):
+    return pitch(_get(db, pid))
+
+
+@router.post("/prospects/{pid}/phone-verified", response_model=ProspectOut)
+def mark_phone_verified(pid: int, verified: bool = True, db: Session = DB, who: str = Depends(actor)):
+    """Owner confirms (after a call or WhatsApp reply) that the listed number reaches this business."""
+    p = _get(db, pid)
+    if verified and not p.phone_normalized:
+        raise HTTPException(422, "No usable phone number to confirm")
+    p.phone_verified, p.phone_verified_at = verified, (utcnow() if verified else None)
+    evaluate(p)
+    log_activity(db, "prospect", p.id, "phone_verified" if verified else "phone_unverified", {"phone": p.phone_normalized}, who)
+    db.commit()
+    return p
+
+
+@router.post("/prospects/{pid}/social-activity", response_model=ProspectOut)
+def set_social_activity(pid: int, activity: str | None = Query(None, pattern="^(very_active|some|inactive)$"), db: Session = DB,
+                        who: str = Depends(actor)):
+    """Owner looked at their Facebook / Instagram and says how active it is (IOI does not scrape social sites)."""
+    p = _get(db, pid)
+    audit = dict(p.audit or {})
+    if activity:
+        audit["social_activity"] = activity
+    else:
+        audit.pop("social_activity", None)
+    p.audit = audit
+    evaluate(p)
+    log_activity(db, "prospect", p.id, "social_activity", {"activity": activity}, who)
+    db.commit()
+    return p
+
+
+@router.post("/prospects/{pid}/contact", response_model=ProspectOut)
+def log_contact(pid: int, body: ProspectContactIn, db: Session = DB, who: str = Depends(actor)):
+    p = _get(db, pid)
+    record_contact(p, body.channel, body.outcome, body.note, who)
+    log_activity(db, "prospect", p.id, "contact_logged", body.model_dump(), who)
+    db.commit()
+    return p

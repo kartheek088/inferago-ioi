@@ -46,8 +46,15 @@ def test_self_promotion_is_irrelevant():
 
 
 def test_out_of_scope_request_is_irrelevant():
-    r = classify("Need a freelancer", "Looking for a freelance designer to make a logo and do SEO")
+    r = classify("Need a freelancer", "Looking for a freelance designer to make a logo and do some illustration")
     assert r.category == Category.IRRELEVANT
+
+
+def test_seo_and_website_requests_are_now_in_scope():
+    # SEO, websites, CRM, AI and ERP/SAP were added as services (owner approval 2026-11-21).
+    r = classify("Need a freelancer", "Looking for a freelancer to build our website and do SEO")
+    assert r.category != Category.IRRELEVANT
+    assert {"website", "marketing"} <= set(r.services)
 
 
 @pytest.mark.parametrize(

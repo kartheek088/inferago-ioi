@@ -230,7 +230,7 @@ class SafeHttp:
             raise FetchError(f"HTTP {res.status_code} from {res.url}")
         return res
 
-    def post_form(self, url: str, data: dict[str, str], *, headers=None) -> FetchResult:
+    def post_form(self, url: str, data: dict[str, str], *, headers=None, timeout: float | None = None) -> FetchResult:
         """POST a form to a public search endpoint (no redirects followed).
 
         Same SSRF, robots.txt, rate-limit and size guarantees as `get`. Only for read-only public
@@ -242,7 +242,8 @@ class SafeHttp:
         _rate_limiter.wait(urlsplit(url).hostname or "", self.rate_limit)
         self.requests_made += 1
         try:
-            with self.client.stream("POST", url, data=data, headers=headers) as resp:
+            extra = {"timeout": httpx.Timeout(timeout)} if timeout else {}
+            with self.client.stream("POST", url, data=data, headers=headers, **extra) as resp:
                 buf = bytearray()
                 for chunk in resp.iter_bytes():
                     buf.extend(chunk)

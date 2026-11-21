@@ -37,6 +37,13 @@ class BusinessProfile(BaseModel):
         "Workflow automation",
         "Internal business applications",
         "Software integration and process digitisation",
+        # Added 2026-11-21 with owner approval.
+        "Website design and development",
+        "SEO and digital marketing",
+        "CRM setup and implementation",
+        "AI solutions (chatbots, assistants, AI automation)",
+        "ERP / SAP implementation and integration",
+        "Digital strategy and online presence consulting",
     ]
 
 
@@ -46,6 +53,12 @@ SERVICE_KEYS = {
     "automation": "Workflow automation",
     "internal_apps": "Internal business applications",
     "integration": "Software integration and process digitisation",
+    "website": "Website design and development",
+    "marketing": "SEO and digital marketing",
+    "crm": "CRM setup and implementation",
+    "ai": "AI solutions (chatbots, assistants, AI automation)",
+    "erp": "ERP / SAP implementation and integration",
+    "strategy": "Digital strategy and online presence consulting",
 }
 
 DEFAULT_PROFILE = BusinessProfile()

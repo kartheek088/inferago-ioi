@@ -576,3 +576,94 @@ class ActionItem(Base):
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+
+class Prospect(TimestampMixin, Base):
+    """A business or independent professional that MAY need Inferago's services.
+
+    Found from open data (OpenStreetMap) — they did not ask for anything. Every fact comes from
+    the source record (`source_url`) or from a recorded website audit; nothing is guessed.
+    """
+
+    __tablename__ = "prospects"
+    __table_args__ = (UniqueConstraint("source_ref", name="uq_prospect_source_ref"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(300))
+    segment: Mapped[str] = mapped_column(String(40), index=True)  # small_business | professional | enterprise
+    business_type: Mapped[str] = mapped_column(String(80), index=True)  # e.g. "dentist"
+    type_label: Mapped[str] = mapped_column(String(120))
+    area: Mapped[str | None] = mapped_column(String(100), index=True)  # search area it was found in
+    country: Mapped[str | None] = mapped_column(String(100), index=True)
+    address: Mapped[str | None] = mapped_column(Text)
+    lat: Mapped[float | None] = mapped_column(Float)
+    lon: Mapped[float | None] = mapped_column(Float)
+    phone: Mapped[str | None] = mapped_column(String(200))  # exactly as published
+    phone_normalized: Mapped[str | None] = mapped_column(String(30))  # e.g. +919843012345
+    phone_type: Mapped[str | None] = mapped_column(String(20), index=True)  # mobile|landline|toll_free|international|invalid
+    phone_verified: Mapped[bool] = mapped_column(Boolean, default=False)  # confirmed by a human (call/WhatsApp)
+    phone_verified_at: Mapped[datetime | None] = mapped_column(DateTime)
+    email: Mapped[str | None] = mapped_column(String(300))
+    website: Mapped[str | None] = mapped_column(String(2048))
+    social_links: Mapped[list[str]] = mapped_column(JSON, default=list)
+    opening_hours: Mapped[str | None] = mapped_column(String(300))
+    has_website: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    source: Mapped[str] = mapped_column(String(40), default="openstreetmap")
+    source_ref: Mapped[str] = mapped_column(String(100))  # e.g. "osm:node/123"
+    source_url: Mapped[str] = mapped_column(String(2048))
+    raw_tags: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    gaps: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)  # [{key,label,detail}]
+    recommended_services: Mapped[list[str]] = mapped_column(JSON, default=list)
+    audit: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    audited_at: Mapped[datetime | None] = mapped_column(DateTime)
+    score: Mapped[float] = mapped_column(Float, default=0.0, index=True)
+    score_reasons: Mapped[list[str]] = mapped_column(JSON, default=list)
+    need_level: Mapped[str | None] = mapped_column(String(20), index=True)  # definite | likely | maybe
+    need_reasons: Mapped[list[str]] = mapped_column(JSON, default=list)
+    status: Mapped[str] = mapped_column(String(30), default="new", index=True)
+    notes: Mapped[str | None] = mapped_column(Text)
+    last_contacted_at: Mapped[datetime | None] = mapped_column(DateTime)
+    next_follow_up: Mapped[datetime | None] = mapped_column(DateTime, index=True)
+    contact_log: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+
+
+class ProspectRun(Base):
+    __tablename__ = "prospect_runs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    areas: Mapped[list[str]] = mapped_column(JSON, default=list)
+    status: Mapped[str] = mapped_column(String(20), default="running", index=True)
+    found: Mapped[int] = mapped_column(Integer, default=0)
+    new: Mapped[int] = mapped_column(Integer, default=0)
+    updated: Mapped[int] = mapped_column(Integer, default=0)
+    skipped: Mapped[int] = mapped_column(Integer, default=0)
+    log: Mapped[list[str]] = mapped_column(JSON, default=list)
+    started_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+
+class ProjectLead(TimestampMixin, Base):
+    """A big project announced in public news (contract won, new plant, expansion, investment).
+
+    The company running it may need outside help (software, websites, CRM, automation), so
+    the owner can approach them as a vendor. Every lead links to the article it came from;
+    the company name is read from the headline and must be checked by the owner.
+    """
+
+    __tablename__ = "project_leads"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    url: Mapped[str] = mapped_column(String(2048), unique=True)
+    title: Mapped[str] = mapped_column(String(500))
+    summary: Mapped[str | None] = mapped_column(Text)
+    feed: Mapped[str] = mapped_column(String(200))
+    published_at: Mapped[datetime | None] = mapped_column(DateTime, index=True)
+    company: Mapped[str | None] = mapped_column(String(300))  # from the headline; owner should verify
+    project_type: Mapped[str] = mapped_column(String(30), index=True)  # contract_won | new_facility | investment | mou
+    amount_text: Mapped[str | None] = mapped_column(String(100))
+    location: Mapped[str | None] = mapped_column(String(100), index=True)  # only if named in the text
+    services: Mapped[list[str]] = mapped_column(JSON, default=list)
+    score: Mapped[float] = mapped_column(Float, default=0.0, index=True)
+    score_reasons: Mapped[list[str]] = mapped_column(JSON, default=list)
+    status: Mapped[str] = mapped_column(String(30), default="new", index=True)
+    notes: Mapped[str | None] = mapped_column(Text)

@@ -1,12 +1,12 @@
 # Build status
 
-_Last updated: 2026-11-20_
+_Last updated: 2026-11-21_
 
 ## Verification (all run locally)
 
 | Check | Result |
 |---|---|
-| Backend tests `uv run pytest` | **132 passed** (unit, GeM connector (mocked), AI quote verification, API integration, mocked connectors, dedupe, eligibility hard gates, score arithmetic, source failures, missing evidence, relationship provenance, outreach approval, migrations, SSRF/auth, documents, AI fallback, end-to-end) |
+| Backend tests `uv run pytest` | **161 passed** (unit, GeM connector (mocked), AI quote verification, API integration, mocked connectors, dedupe, eligibility hard gates, score arithmetic, source failures, missing evidence, relationship provenance, outreach approval, migrations, SSRF/auth, documents, AI fallback, end-to-end) |
 | Alembic `upgrade head` + `alembic check` | Pass — no drift between models and migration |
 | Migration upgrade → downgrade → upgrade | Pass (test) |
 | Frontend `tsc` type check | Pass |
@@ -19,6 +19,48 @@ _Last updated: 2026-11-20_
 `scripts/test.sh` runs the full suite.
 
 ## Implemented
+
+- **Prospects (2026-11-21).** Finds businesses and independent professionals with potential but weak or no
+  online presence, using OpenStreetMap via a public Overpass mirror (overpass-api.de is skipped because its
+  robots.txt disallows /api/). Three segments: small businesses, independent professionals, and bigger
+  companies (factories and Pvt Ltd firms, the ERP/SAP/CRM potential). Chains (brand-tagged), government offices and
+  unnamed places are skipped; a Facebook/Instagram link is never counted as a website. A deterministic
+  0–100 score has a reason for every point. An optional homepage check (robots.txt respected) finds gaps:
+  no HTTPS, not mobile-friendly, no title or meta description, no analytics, no chat or WhatsApp, no enquiry form,
+  basic builder, or an outdated copyright year. Each prospect gets a draft pitch with call, WhatsApp, email and map links;
+  nothing is sent automatically. There is a contact log with outcomes, auto follow-up dates and CSV export.
+  Areas: 17 Tamil Nadu cities, 12 other Indian cities and 22 international cities, plus custom `Name@lat,lon`.
+- **Prospects from an offline map file (2026-11-21).** The owner downloads a Geofabrik `.osm.pbf` once in a browser
+  (Geofabrik's robots.txt blocks bots from .pbf files, so IOI never downloads it itself). IOI scans it locally with pyosmium:
+  all of Tamil Nadu, around chosen cities, or the whole file. It keeps the best N and assigns each prospect to the nearest
+  listed city within 40 km. Files are read only from `backend/data/maps/` or `~/Downloads/`, never from an arbitrary path.
+  Tested with generated map files; not yet timed on the real ~1 GB South India file.
+- **No-website + phone rules (2026-11-22).** New searches (live or map file) keep only businesses without a website
+  that list a usable phone number (settings `prospect_only_no_website`, `prospect_require_phone`). Existing prospects
+  are kept. Phones get a format check: Indian mobile, landline or toll-free, normalised to +91, or "looks wrong".
+  "Number works" is set only by a human: the confirm button, or a call/WhatsApp logged as interested, not interested or won.
+  WhatsApp links are offered only for mobile numbers. Map files over 300 MB use a temporary disk index instead of RAM;
+  a file still being written (modified in the last 2 minutes) cannot be scanned.
+- **Who does NOT need us (2026-11-22).** Prospects are skipped if they are chains or partner-run (brand/franchise tags,
+  OYO/Treebo and other hotel networks, food, pharmacy and retail chains, bank branches, vehicle dealers), colleges or
+  universities, IT/software companies, or government bodies. Older records are auto-marked "Auto-skipped: reason".
+- **Need level.** Each prospect is rated "definite", "likely" or "maybe", with reasons. Definite means no website, a usable
+  phone, signs of being active (hours, address, social or email), and a business type that wins customers online.
+  The Prospects list shows "Definitely needs us" by default.
+- **Social media = potential (2026-11-22).** No website + usable phone + social pages counts as "definite": they already
+  market themselves online but likely have no team or know-how. IOI does not read social sites. The owner opens the page
+  and marks it Very active, Some posts or Inactive, which changes the score and the need level. Independent dealers (cars, bikes,
+  tyres, electronics, appliances, hardware…) are no longer skipped for carrying a brand tag; company-owned chains still are.
+  Records auto-skipped by a rule that was later relaxed are restored at startup.
+- **Big projects (2026-11-22).** Public business-news RSS feeds (The Hindu, BusinessLine, ET, ET Infra; robots.txt
+  checked) are matched for contracts won, new plants/facilities, investments/expansions and MoUs. Each lead records the
+  amount, place and company exactly as stated in the headline (for "X awards contract to Y", the company is Y). IT firms
+  and political/market noise are skipped. Leads come with a vendor-approach draft and links to find the company's contact;
+  nothing is sent. Runs on demand and every 12 hours when the scheduler is on. First live run: 350 articles, 23 projects.
+- **Services expanded with owner approval (2026-11-21).** Website design, SEO and digital marketing, CRM, AI solutions,
+  ERP/SAP implementation, and digital strategy. SEO is no longer treated as out of scope.
+- **Simplified UI (2026-11-21).** The main menu now has Today, Prospects, Projects & tenders, Messages and Follow-ups,
+  and everything else is under "More tools". There is a new "Today" page with four steps and a visual refresh.
 
 - Monorepo, config via env, SQLite + SQLAlchemy 2 + Alembic (21 tables, indexes, FKs, unique and check constraints).
 - Source registry with honest statuses (23 sources: 5 live, 3 manual, 1 credential-gated, 14 planned); enable/schedule/config from UI; per-source health, failure counts, run logs.
@@ -65,6 +107,11 @@ _Last updated: 2026-11-20_
 - Automatic sending/calling/bidding/registration: intentionally not implemented.
 
 ## Known limitations
+
+- **Prospect search depends on free public Overpass mirrors.** On 2026-11-21 one test query succeeded (about 6 s), then all
+  three mirrors timed out or returned 504 for the rest of the day, even on tiny queries. The full live path is verified only
+  with mocked responses. Progress is now saved after each city. A mirror that fails is skipped for the rest of the run,
+  and the run ends early once every mirror has failed (about 2–3 minutes, not hours). There is a Stop button.
 
 - Cross-posted forum posts (same post on n8n and Make) are not merged unless text is identical.
 

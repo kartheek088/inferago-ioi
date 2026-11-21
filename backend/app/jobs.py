@@ -103,6 +103,42 @@ def submit_discovery(job_id: int, *, background: bool = True) -> None:
         _run_discovery(job_id)
 
 
+def _run_prospect_search(run_id: int, radius_m: int, max_per_area: int, rules=None) -> None:
+    from app.models import ProspectRun
+    from app.prospects import run_prospect_search
+
+    with SessionLocal() as db:
+        run = db.get(ProspectRun, run_id)
+        if not run:
+            return
+        try:
+            run_prospect_search(db, run, radius_m=radius_m, max_per_area=max_per_area, rules=rules)
+        except Exception as exc:  # noqa: BLE001
+            log.exception("Prospect search %s failed", run_id)
+            db.rollback()
+            run = db.get(ProspectRun, run_id)
+            run.status, run.log = "failed", [*(run.log or []), str(exc)[:500]]
+            db.commit()
+
+
+def submit_prospect_search(run_id: int, *, radius_m: int, max_per_area: int, rules=None) -> None:
+    executor().submit(_run_prospect_search, run_id, radius_m, max_per_area, rules)
+
+
+def _run_map_scan(run_id: int, path: str, kwargs: dict) -> None:
+    from app.models import ProspectRun
+    from app.prospects import run_map_file_scan
+
+    with SessionLocal() as db:
+        run = db.get(ProspectRun, run_id)
+        if run:
+            run_map_file_scan(db, run, path, **kwargs)
+
+
+def submit_map_scan(run_id: int, path: str, **kwargs) -> None:
+    executor().submit(_run_map_scan, run_id, path, kwargs)
+
+
 def _run_research() -> None:
     from app.research import run_research_batch
 
@@ -123,6 +159,21 @@ def _scheduled_source_run(source_key: str) -> None:
         db.add(job)
         db.commit()
         _run_discovery(job.id)
+
+
+def _scheduled_big_projects() -> None:
+    """Twice a day: read the news feeds for new big projects (read-only; nothing is sent)."""
+    from app.big_projects import run_project_search
+    from app.db import utcnow
+    from app.settings_store import set_setting
+
+    with SessionLocal() as db:
+        try:
+            stats = run_project_search(db)
+            set_setting(db, "big_projects_last_run", {"at": utcnow().isoformat(), "trigger": "scheduled", **stats})
+            db.commit()
+        except Exception:  # noqa: BLE001
+            log.exception("Scheduled big-project search failed")
 
 
 def sync_schedule() -> list[str]:
@@ -149,6 +200,8 @@ def start() -> None:
         _scheduler = BackgroundScheduler(timezone="UTC")
         _scheduler.start()
         keys = sync_schedule()
+        _scheduler.add_job(_scheduled_big_projects, "interval", hours=12, id="big_projects", replace_existing=True,
+                           max_instances=1, coalesce=True, misfire_grace_time=3600)
         log.info("Scheduler started for sources: %s", keys)
 
 
