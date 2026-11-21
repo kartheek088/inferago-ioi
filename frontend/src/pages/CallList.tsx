@@ -5,7 +5,10 @@ import { NeedBadge, PhoneBadge, Prospect } from "./Prospects";
 
 interface Next { prospect: Prospect | null; reason: string | null; remaining_new: number | null }
 interface Summary { calls_today: Record<string, number>; by_state: Record<string, number> }
-interface Pitch { message: string; soft_message: string; niche_label: string | null; call_script: string; if_rude: string;
+interface Trust { level: "high" | "good" | "low"; why: string; check_link: string | null; found_on: string; dataset: string | null }
+interface OutreachStatus { sent_today: number; cap: number; cap_reached: boolean; in_hours: boolean; hours: { start: number; end: number };
+  now_ist: string; sender_name: string; sender_link: string; max_messages_without_reply: number }
+interface Pitch { message: string; soft_message: string; is_follow_up: boolean; trust: Trust; niche_label: string | null; call_script: string; if_rude: string;
   links: { call: string | null; whatsapp: string | null; email: string | null; map: string } }
 export const FOCUS: [string, string][] = [["", "All"], ["new", "🆕 New businesses"], ["hidden", "💎 Hidden gems"], ["shops", "🛒 Shops & bazaars"],
   ["real_estate", "🏠 Real estate"], ["delivery", "🚚 Delivery"], ["art", "🎨 Art & craft"], ["partners", "🤝 Referral partners"]];
@@ -57,6 +60,26 @@ function Qualify({ onSave, busy }: { onSave: (q: Record<string, unknown>, qualif
   );
 }
 
+function SenderBox({ st, onSaved }: { st: OutreachStatus; onSaved: () => void }) {
+  const [name, setName] = useState(st.sender_name);
+  const [link, setLink] = useState(st.sender_link);
+  const [open, setOpen] = useState(!st.sender_name);
+  const act = useAction();
+  const save = async () => {
+    if (await act.run(() => api.put("/settings", { sender_name: name.trim(), sender_link: link.trim() }), "Saved")) { onSaved(); setOpen(false); }
+  };
+  if (!open) return <button className="link-btn small" onClick={() => setOpen(true)}>Sending as {st.sender_name || "Inferago"}{st.sender_link ? ` · ${st.sender_link}` : ""} — edit</button>;
+  return (
+    <div className="alert info small" style={{ flexWrap: "wrap" }}>
+      <span><strong>Look real, not like spam:</strong> add your name and one link a business can check (Instagram, LinkedIn or website). It goes into every message.</span>
+      <input placeholder="Your name" value={name} onChange={(e) => setName(e.target.value)} style={{ maxWidth: 180 }} />
+      <input placeholder="https://instagram.com/inferago (optional)" value={link} onChange={(e) => setLink(e.target.value)} style={{ maxWidth: 280 }} />
+      <button className="btn sm primary" disabled={act.busy || !name.trim()} onClick={save}>Save</button>
+      <Msg msg={act.msg} />
+    </div>
+  );
+}
+
 export default function CallList() {
   const [group, setGroup] = useState<string>(() => readPref("group", "no_website"));
   const [state, setState] = useState<string>(() => readPref("state", ""));
@@ -64,6 +87,9 @@ export default function CallList() {
   const [mobileOnly, setMobileOnly] = useState<boolean>(() => readPref("mobile", true));
   const [focus, setFocus] = useState<string>(() => readPref("focus", ""));
   const [channel, setChannel] = useState<"whatsapp" | "call">(() => readPref("channel", "whatsapp"));
+  const [real, setReal] = useState<string>(() => readPref("real", "good"));
+  const [override, setOverride] = useState(false);
+  const ost = useApi(() => api.get<OutreachStatus>("/prospects/outreach-status"));
   const [skipped, setSkipped] = useState<number[]>([]);
   const [next, setNext] = useState<Next | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -75,25 +101,25 @@ export default function CallList() {
   const p = next?.prospect ?? null;
   const pitch = useApi(() => (p ? api.get<Pitch>(`/prospects/${p.id}/pitch`) : Promise.resolve(null)), [p?.id]);
 
-  useEffect(() => { writePref("group", group); writePref("state", state); writePref("quality", quality); writePref("mobile", mobileOnly); writePref("focus", focus); writePref("channel", channel); },
-    [group, state, quality, mobileOnly, focus, channel]);
+  useEffect(() => { writePref("group", group); writePref("state", state); writePref("quality", quality); writePref("mobile", mobileOnly); writePref("focus", focus); writePref("channel", channel); writePref("real", real); },
+    [group, state, quality, mobileOnly, focus, channel, real]);
 
   const load = useCallback(async (extraSkip: number[] = []) => {
     setErr(null);
     setMode("idle"); setNote(""); setCbWhen("");
     try {
       setNext(await api.get<Next>("/prospects/next", {
-        group, state, quality, focus, phone: mobileOnly || channel === "whatsapp" ? "mobile" : "usable", exclude: [...skipped, ...extraSkip].join(","),
+        group, state, quality, focus, real, phone: mobileOnly || channel === "whatsapp" ? "mobile" : "usable", exclude: [...skipped, ...extraSkip].join(","),
         need: group === "no_website" ? "likely" : undefined,
       }));
     } catch (e) { setErr(String(e)); }
-  }, [group, state, quality, mobileOnly, focus, channel, skipped]);
-  useEffect(() => { load(); }, [group, state, quality, mobileOnly, focus, channel]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [group, state, quality, mobileOnly, focus, channel, real, skipped]);
+  useEffect(() => { load(); }, [group, state, quality, mobileOnly, focus, channel, real]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const log = async (outcome: string, extra: Record<string, unknown> = {}) => {
     if (!p) return;
     const r = await act.run(() => api.post(`/prospects/${p.id}/contact`, { channel, outcome, note: note || null, ...extra }));
-    if (r !== undefined) { summary.reload(); load(); }
+    if (r !== undefined) { summary.reload(); ost.reload(); load(); }
   };
   const skip = () => { if (p) { setSkipped((s) => [...s, p.id]); load([p.id]); } };
   const callbackPreset = (days: number, hour = 11) => {
@@ -123,6 +149,7 @@ export default function CallList() {
   });
 
   const today = summary.data?.calls_today ?? { total: 0 };
+  const blocked = !!ost.data && (!ost.data.in_hours || ost.data.cap_reached) && !(pitch.data?.is_follow_up && ost.data.in_hours);
   const states = Object.keys(summary.data?.by_state ?? {}).filter((s) => s !== "unknown");
   return (
     <>
@@ -132,12 +159,20 @@ export default function CallList() {
           <p className="muted">One business at a time. Start with a friendly WhatsApp that offers something free (no cold-call pressure), tap what happened, go to the next. Follow-ups due come first.</p>
         </div>
         <div className="today-meter" title="Calls logged today">
-          <div className="row between small"><strong>Today</strong><span>{today.total} / {TARGET} reached</span></div>
+          <div className="row between small"><strong>Today</strong><span>{today.total} / {TARGET} reached{ost.data ? ` · ${ost.data.sent_today}/${ost.data.cap} first messages` : ""}</span></div>
           <div className="bar"><div className="fill" style={{ width: `${Math.min(100, (100 * today.total) / TARGET)}%` }} /></div>
           <div className="xs muted">{today.interested ?? 0} interested · {today.qualified ?? 0} qualified · {today.callback ?? 0} callbacks · {today.no_answer ?? 0} no answer</div>
         </div>
       </header>
 
+      {ost.data && <SenderBox st={ost.data} onSaved={() => { ost.reload(); pitch.reload(); }} />}
+      {ost.data && channel === "whatsapp" && (!ost.data.in_hours || ost.data.cap_reached) && (
+        <div className="alert warn small">
+          {ost.data.cap_reached
+            ? `You've sent ${ost.data.sent_today} first messages today (limit ${ost.data.cap}). Sending more in one day is how numbers get reported as spam. Do follow-ups and calls back instead, and continue tomorrow.`
+            : `It's ${ost.data.now_ist} IST. Messages are best sent ${ost.data.hours.start}:00–${ost.data.hours.end}:00, Monday to Saturday. Outside those hours they feel intrusive.`}
+        </div>
+      )}
       <div className="seg-tabs">
         {GROUPS.map(([k, v]) => <button key={k} className={`seg ${group === k ? "on" : ""}`} onClick={() => { setSkipped([]); setGroup(k); }}>{v}</button>)}
       </div>
@@ -153,6 +188,11 @@ export default function CallList() {
         <select value={state} onChange={(e) => { setSkipped([]); setState(e.target.value); }} aria-label="State">
           <option value="">All states</option>
           {states.map((s) => <option key={s} value={s}>{s} ({summary.data?.by_state[s]})</option>)}
+        </select>
+        <select value={real} onChange={(e) => { setSkipped([]); setReal(e.target.value); }} aria-label="Real business check">
+          <option value="strong">Only very sure they're real</option>
+          <option value="good">Sure they're real</option>
+          <option value="any">Include unsure listings</option>
         </select>
         <select value={quality} onChange={(e) => { setSkipped([]); setQuality(e.target.value); }} aria-label="Business quality">
           <option value="established">Established businesses only</option>
@@ -184,13 +224,23 @@ export default function CallList() {
           </div>
 
           <div className="call-actions">
-            {channel === "whatsapp" && pitch.data?.links.whatsapp && <a className="btn primary big" href={pitch.data.links.whatsapp} target="_blank" rel="noopener noreferrer">💬 Open WhatsApp with message <kbd>W</kbd></a>}
+            {channel === "whatsapp" && pitch.data?.links.whatsapp && (blocked && !override
+              ? <span className="row gap-s"><button className="btn big" disabled>💬 WhatsApp paused ({ost.data?.cap_reached ? "daily limit" : "outside hours"})</button>
+                  <button className="link-btn xs" onClick={() => setOverride(true)}>send anyway</button></span>
+              : <a className="btn primary big" href={pitch.data.links.whatsapp} target="_blank" rel="noopener noreferrer">💬 {pitch.data.is_follow_up ? "Send the one follow-up" : "Open WhatsApp with message"} <kbd>W</kbd></a>)}
             {pitch.data?.links.call && <a className={`btn big ${channel === "call" ? "primary" : ""}`} href={pitch.data.links.call}>📞 Call {p.phone_normalized} <kbd>C</kbd></a>}
             {channel === "call" && pitch.data?.links.whatsapp && <a className="btn big" href={pitch.data.links.whatsapp} target="_blank" rel="noopener noreferrer">💬 WhatsApp <kbd>W</kbd></a>}
             {p.social_links[0] && /^https?:/.test(p.social_links[0]) && <a className="btn big" href={p.social_links[0]} target="_blank" rel="noopener noreferrer">👥 Their page</a>}
             {p.website && <a className="btn big" href={/^https?:/.test(p.website) ? p.website : `http://${p.website}`} target="_blank" rel="noopener noreferrer">🌐 Their site</a>}
           </div>
 
+          {pitch.data?.trust && (
+            <div className={`trust trust-${pitch.data.trust.level}`}>
+              <strong>{pitch.data.trust.level === "high" ? "✓ Very likely a real, running business" : pitch.data.trust.level === "good" ? "✓ Likely a real business" : "⚠ Not sure this business is still running"}</strong>
+              <span className="small"> · {pitch.data.trust.why}{pitch.data.trust.dataset ? ` · source: ${pitch.data.trust.dataset === "meta" ? "Facebook business page (via Overture Maps)" : pitch.data.trust.dataset}` : ""}</span>
+              {pitch.data.trust.check_link && <> · <a href={pitch.data.trust.check_link} target="_blank" rel="noopener noreferrer" className="small">check {pitch.data.trust.found_on} first ↗</a></>}
+            </div>
+          )}
           <div className="grid grid-2">
             <div>
               <h3>Why they need us</h3>
@@ -198,7 +248,7 @@ export default function CallList() {
               {p.gaps.length > 0 && <div className="chips tight" style={{ marginTop: 6 }}>{p.gaps.slice(0, 5).map((g) => <span key={g.key} className="chip warn static">{g.label}</span>)}</div>}
             </div>
             <div>
-              <h3>{channel === "whatsapp" ? "WhatsApp message (edit before sending)" : "What to say"}{pitch.data?.niche_label && <span className="badge info" style={{ marginLeft: 6 }}>{pitch.data.niche_label}</span>}</h3>
+              <h3>{channel === "whatsapp" ? (pitch.data?.is_follow_up ? "Follow-up message (the last one; they didn't reply)" : "WhatsApp message (edit before sending)") : "What to say"}{pitch.data?.niche_label && <span className="badge info" style={{ marginLeft: 6 }}>{pitch.data.niche_label}</span>}</h3>
               <p className="small script" style={{ whiteSpace: "pre-wrap" }}>{(channel === "whatsapp" ? pitch.data?.soft_message : pitch.data?.call_script) ?? "…"}</p>
               {channel === "call" && pitch.data?.if_rude && <p className="xs muted">If they're rude: {pitch.data.if_rude}</p>}
               {p.contact_log.length > 0 && <p className="xs muted">Last time: {p.contact_log[p.contact_log.length - 1].outcome.replace("_", " ")}{p.contact_log[p.contact_log.length - 1].note ? ` — ${p.contact_log[p.contact_log.length - 1].note}` : ""}</p>}
@@ -243,7 +293,7 @@ export default function CallList() {
             <Qualify busy={act.busy} onSave={(q, ok) => log(ok ? "qualified" : "interested", { qualification: q })} />
           )}
           <p className="xs muted">{channel === "whatsapp"
-            ? "Shortcuts: W open WhatsApp · 1 sent · 4 interested · 2 not now · 3 not interested · 5 not on WhatsApp · S skip. Sent messages come back as follow-ups in 3 days."
+            ? `Shortcuts: W open WhatsApp · 1 sent · 4 interested · 2 not now · 3 not interested · 5 not on WhatsApp · S skip. One follow-up after 3 days, then we stop if there's no reply (max ${ost.data?.max_messages_without_reply ?? 2} messages). Anyone who says no is never contacted again.`
             : "Shortcuts: C call · W WhatsApp · 1 no answer · 2 call back · 3 not interested · 4 interested · 5 wrong number · S skip"}</p>
         </section>
       )}

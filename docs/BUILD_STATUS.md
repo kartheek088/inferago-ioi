@@ -6,7 +6,7 @@ _Last updated: 2026-11-21_
 
 | Check | Result |
 |---|---|
-| Backend tests `uv run pytest` | **172 passed** (unit, GeM connector (mocked), AI quote verification, API integration, mocked connectors, dedupe, eligibility hard gates, score arithmetic, source failures, missing evidence, relationship provenance, outreach approval, migrations, SSRF/auth, documents, AI fallback, end-to-end) |
+| Backend tests `uv run pytest` | **179 passed** (unit, GeM connector (mocked), AI quote verification, API integration, mocked connectors, dedupe, eligibility hard gates, score arithmetic, source failures, missing evidence, relationship provenance, outreach approval, migrations, SSRF/auth, documents, AI fallback, end-to-end) |
 | Alembic `upgrade head` + `alembic check` | Pass — no drift between models and migration |
 | Migration upgrade → downgrade → upgrade | Pass (test) |
 | Frontend `tsc` type check | Pass |
@@ -43,6 +43,17 @@ _Last updated: 2026-11-21_
   "Number works" is set only by a human: the confirm button, or a call/WhatsApp logged as interested, not interested or won.
   WhatsApp links are offered only for mobile numbers. Map files over 300 MB use a temporary disk index instead of RAM;
   a file still being written (modified in the last 2 minutes) cannot be scanned.
+- **Real businesses only, outreach that doesn't look like spam (2026-11-22).**
+  - `real=` filter (default `good`): directory listings need Overture confidence ≥ 0.6 and an address (`strong` = ≥ 0.8);
+    OpenStreetMap records count as community-checked. That leaves 186k of 323k open prospects by default, 88k on `strong`.
+  - Each outreach card shows a trust line (how sure we are the business is real and running, the source, and a link to their
+    Facebook/Instagram page or map record to check first).
+  - Messages are personal and honest: the sender's name and a checkable link (settings `sender_name`, `sender_link`), "registered
+    (Udyam MSME)" (true per profile), where we found them ("your Facebook page", using the real source), what they do and where,
+    one free offer, and a clear opt-out ("reply no and I won't message again").
+  - Limits: 25 first messages a day (`outreach_daily_cap`), 10:00–19:00 IST Monday–Saturday (`outreach_hours`). Outside these the
+    WhatsApp button pauses (an explicit "send anyway" link remains). One gentle follow-up after 3 days, then nothing more without
+    a reply (`max_messages_without_reply` = 2). Anyone who says no is never queued again.
 - **WhatsApp-first outreach, focus lists, new businesses, no dealers (2026-11-22, later).**
   - The Call list is now an *Outreach list* with **WhatsApp first** as the default. The message is soft and value-first: a free sample
     homepage, a free website-fix list, a free billing-app demo for shops, or a referral partnership for CAs, architects and

@@ -494,6 +494,10 @@ class SettingsUpdate(BaseModel):
     prospect_max_per_area: int | None = Field(None, ge=1, le=500)
     prospect_only_no_website: bool | None = None
     prospect_require_phone: bool | None = None
+    sender_name: str | None = Field(None, max_length=80)
+    sender_link: str | None = Field(None, max_length=300)
+    outreach_daily_cap: int | None = Field(None, ge=1, le=200)
+    max_messages_without_reply: int | None = Field(None, ge=1, le=5)
 
 
 class AIReviewOut(ORM):

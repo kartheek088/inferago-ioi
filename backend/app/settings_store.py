@@ -57,6 +57,12 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "prospect_require_phone": True,
     "big_projects_last_run": None,
     "prospect_rules_version": None,
+    # Outreach etiquette: who you are (so people can check you're real), how much, and when.
+    "sender_name": "",
+    "sender_link": "",  # your website / Instagram / LinkedIn — something a business can check
+    "outreach_daily_cap": 25,
+    "outreach_hours": {"start": 10, "end": 19, "days": [0, 1, 2, 3, 4, 5]},  # IST, Mon–Sat
+    "max_messages_without_reply": 2,
 }
 
 

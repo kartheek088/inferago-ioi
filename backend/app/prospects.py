@@ -1154,7 +1154,36 @@ def digits(phone: str | None) -> str | None:
     return d or None
 
 
-def pitch(p: Prospect) -> dict[str, Any]:
+def where_found(p: Prospect) -> tuple[str, str | None]:
+    """Honest 'where I found you' phrase + a link the owner can open to check the business is real."""
+    fb = next((x for x in (p.social_links or []) if "facebook" in x.lower() or "fb.com" in x.lower()), None)
+    ig = next((x for x in (p.social_links or []) if "instagram" in x.lower()), None)
+    if fb:
+        return "your Facebook page", fb if fb.startswith("http") else None
+    if ig:
+        return "your Instagram page", ig if ig.startswith("http") else None
+    if p.source == "openstreetmap":
+        return "the map listing for your business", p.source_url
+    return "your business listing online", p.source_url
+
+
+def listing_trust(p: Prospect) -> dict[str, Any]:
+    """How sure we are this is a real, running business — shown before contacting."""
+    conf = float((p.raw_tags or {}).get("overture:confidence") or 0)
+    if p.source == "openstreetmap":
+        level, why = "good", "community-checked OpenStreetMap record"
+    elif conf >= 0.8:
+        level, why = "high", f"listing confidence {conf:.2f} (business page with phone and address)"
+    elif conf >= 0.6:
+        level, why = "good", f"listing confidence {conf:.2f}"
+    else:
+        level, why = "low", f"listing confidence {conf:.2f} — check their page is active before contacting"
+    where, link = where_found(p)
+    return {"level": level, "why": why, "check_link": link, "found_on": where,
+            "dataset": (p.raw_tags or {}).get("overture:dataset") or ("OpenStreetMap" if p.source == "openstreetmap" else None)}
+
+
+def pitch(p: Prospect, sender_name: str = "", sender_link: str = "") -> dict[str, Any]:
     gaps = [g["label"].lower() for g in (p.gaps or []) if g.get("key") not in ("no_contact", "social_only")]
     services = [PITCH_LINES[s] for s in (p.recommended_services or []) if s in PITCH_LINES][:3]
     niche = niche_of(p)
@@ -1183,15 +1212,32 @@ def pitch(p: Prospect) -> dict[str, Any]:
         offer = f"I checked your website for free and found {len(gaps)} quick fixes ({', '.join(gaps[:2])}). Happy to send you the list, no charge."
     else:
         offer = "I can make you a free sample homepage for your business so you can see how it would look. No cost, no obligation."
-    soft = f"Hi {p.name} 🙏\n\nI'm from Inferago, a small tech team in Tamil Nadu. " + (
-        f"{offer}\n\nShall I send it? Just reply yes, or no worries if not interested.")
+    found_on, _ = where_found(p)
+    me = f"I'm {sender_name} from Inferago Tech Services" if sender_name else "I'm from Inferago Tech Services"
+    kind = (p.type_label or "business").split(" / ")[0].lower()
+    place = f" in {p.area}" if p.area and p.area != "Other" else ""
+    soft = (
+        f"Hi {p.name} 🙏\n\n"
+        f"{me}, a small registered (Udyam MSME) tech team in Tamil Nadu. I came across {found_on} while looking at {kind}s{place}.\n\n"
+        f"{offer}\n\n"
+        "Shall I send it? Just reply yes. If you'd rather not hear from me, reply no and I won't message again."
+        + (f"\n\nAbout us: {sender_link}" if sender_link else "")
+    )
+    follow_up = (
+        f"Hi {p.name}, just a gentle follow-up on my message last week. "
+        "No pressure at all — if it's useful I'm happy to share it, otherwise I won't message again. Thank you 🙏"
+    )
     norm, ptype = (p.phone_normalized, p.phone_type) if p.phone_type else check_phone(p.phone, p.country)
     d = norm.lstrip("+") if norm else None
-    wa = f"https://wa.me/{d}?text={quote(soft)}" if d and ptype in ("mobile", "international") else None
+    sent_before = sum(1 for c in (p.contact_log or []) if c.get("channel") == "whatsapp" and c.get("outcome") == "contacted")
+    text = follow_up if sent_before else soft
+    wa = f"https://wa.me/{d}?text={quote(text)}" if d and ptype in ("mobile", "international") else None
     return {
         "subject": f"Helping {p.name} get more customers online",
         "message": body,
-        "soft_message": soft,
+        "soft_message": text,
+        "is_follow_up": bool(sent_before),
+        "trust": listing_trust(p),
         "niche": niche,
         "niche_label": NICHES[niche]["label"] if niche else None,
         "call_script": f"Hi, is this {p.name}? I'm calling from Inferago Tech Services. {noticed}. "
@@ -1215,7 +1261,7 @@ QUALIFY_KEYS = ("needs", "budget", "decision_maker", "timeline", "current_setup"
 
 
 def record_contact(p: Prospect, channel: str, outcome: str, note: str | None, actor: str, *, callback_at=None,
-                   qualification: dict | None = None) -> None:
+                   qualification: dict | None = None, max_unanswered: int = 2) -> None:
     now = utcnow()
     entry = {"at": now.isoformat(), "channel": channel, "outcome": outcome, "note": note, "by": actor}
     if qualification:
@@ -1233,3 +1279,12 @@ def record_contact(p: Prospect, channel: str, outcome: str, note: str | None, ac
     else:
         days = FOLLOW_UP_DAYS.get(p.status)
         p.next_follow_up = now + timedelta(days=days) if days else None
+    unanswered = 0  # messages sent since their last reply
+    for c in p.contact_log:
+        if c.get("outcome") in ("contacted", "no_answer"):
+            unanswered += 1
+        else:
+            unanswered = 0
+    if outcome in ("contacted", "no_answer") and unanswered >= max_unanswered:
+        p.next_follow_up = None  # no reply after the limit: stop following up (no spam)
+        p.notes = ((p.notes + "\n") if p.notes else "") + f"No reply after {unanswered} attempts — not contacting again."

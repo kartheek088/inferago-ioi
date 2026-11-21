@@ -7,7 +7,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
-from sqlalchemy import Integer, func, or_, select
+from sqlalchemy import Float, Integer, func, or_, select
 from sqlalchemy.orm import Session
 
 from app import jobs
@@ -65,8 +65,20 @@ def _focus(stmt, focus):
     return stmt.where(or_(*[kind.like(f"%{w.replace('_', ' ')}%") for w in words], *[kind.like(f"%{w}%") for w in words]))
 
 
-def _filtered(q, segment, status, area, country, has_website, service, min_score, phone=None, need=None, state=None, quality=None, focus=None):
-    stmt = _focus(select(Prospect), focus)
+REAL_MIN = {"strong": 0.8, "good": 0.6}
+
+
+def _real(stmt, real):
+    """Only listings we're confident are real, running businesses (OSM records are community-checked)."""
+    if not real or real == "any":
+        return stmt
+    conf = func.cast(func.json_extract(Prospect.raw_tags, '$."overture:confidence"'), Float)
+    return stmt.where(or_(Prospect.source != "overture", (conf >= REAL_MIN[real]) & Prospect.address.is_not(None)))
+
+
+def _filtered(q, segment, status, area, country, has_website, service, min_score, phone=None, need=None, state=None, quality=None, focus=None,
+              real=None):
+    stmt = _real(_focus(select(Prospect), focus), real)
     if quality == "established":
         stmt = stmt.where(Prospect.quality_level == "established")
     elif quality == "good":
@@ -119,11 +131,12 @@ def list_prospects(
     state: str | None = None,
     quality: str | None = Query(None, pattern="^(established|good)$"),
     focus: str | None = Query(None, pattern=FOCUS_PATTERN),
+    real: str | None = Query("good", pattern="^(strong|good|any)$"),
     sort: str = Query("score", pattern="^(score|newest|follow_up|name)$"),
     paging: Paging = Depends(),
     db: Session = DB,
 ):
-    stmt = _filtered(q, segment, status, area, country, has_website, service, min_score, phone, need, state, quality, focus)
+    stmt = _filtered(q, segment, status, area, country, has_website, service, min_score, phone, need, state, quality, focus, real)
     if sort == "follow_up":
         stmt = stmt.where(Prospect.next_follow_up.is_not(None))
     stmt = stmt.order_by(SORTS[sort], Prospect.id.desc())
@@ -140,11 +153,11 @@ def map_points(
     quality: str | None = Query(None, pattern="^(established|good)$"),
     has_website: bool | None = None, phone: str | None = Query(None, pattern="^(verified|mobile|usable)$"),
     service: str | None = None, q: str | None = None, state: str | None = None,
-    focus: str | None = Query(None, pattern=FOCUS_PATTERN),
+    focus: str | None = Query(None, pattern=FOCUS_PATTERN), real: str | None = Query("good", pattern="^(strong|good|any)$"),
     limit: int = Query(3000, ge=1, le=10000), db: Session = DB,
 ):
     """Compact points for the map view: the best `limit` prospects inside the visible area."""
-    stmt = _filtered(q, segment, status, None, None, has_website, service, None, phone, need, state, quality, focus).where(
+    stmt = _filtered(q, segment, status, None, None, has_website, service, None, phone, need, state, quality, focus, real).where(
         Prospect.lat.between(min_lat, max_lat), Prospect.lon.between(min_lon, max_lon))
     total = db.scalar(select(func.count()).select_from(stmt.order_by(None).subquery())) or 0
     # Spread the points over the visible area: split it into a grid and take the best few per cell, so a
@@ -168,6 +181,7 @@ def next_to_call(
     segment: str | None = Query(None, pattern="^(small_business|professional|enterprise|college)$"),
     exclude: str | None = Query(None, max_length=4000, description="comma-separated ids skipped this session"),
     focus: str | None = Query(None, pattern=FOCUS_PATTERN),
+    real: str | None = Query("good", pattern="^(strong|good|any)$"),
     db: Session = DB,
 ):
     """The next prospect for the call list: due callbacks / retries first, then the best new one."""
@@ -175,7 +189,7 @@ def next_to_call(
     q_level = None if quality == "any" else quality
 
     def base():
-        stmt = _filtered(None, segment, None, None, None, None, None, None, phone, None, state, q_level, focus)
+        stmt = _filtered(None, segment, None, None, None, None, None, None, phone, None, state, q_level, focus, real)
         if group == "no_website":
             stmt = stmt.where(Prospect.has_website.is_(False), Prospect.segment != "college")
             if need:
@@ -203,6 +217,38 @@ def _filtered_need(stmt, need):
     if need == "definite":
         return stmt.where(Prospect.need_level == "definite")
     return stmt.where(Prospect.need_level.in_(("definite", "likely")))
+
+
+@router.get("/prospects/outreach-status")
+def outreach_status(db: Session = DB):
+    """Daily limit and sending hours, so outreach stays personal and never spammy."""
+    from datetime import timedelta
+
+    from app.settings_store import get_setting
+
+    now_ist = utcnow() + timedelta(hours=5, minutes=30)
+    hours = get_setting(db, "outreach_hours") or {"start": 10, "end": 19, "days": [0, 1, 2, 3, 4, 5]}
+    in_hours = now_ist.weekday() in hours.get("days", []) and hours.get("start", 10) <= now_ist.hour < hours.get("end", 19)
+    sent = _calls_today(db)
+    whatsapp_sent = _whatsapp_today(db)
+    cap = int(get_setting(db, "outreach_daily_cap") or 25)
+    return {
+        "sent_today": whatsapp_sent, "cap": cap, "cap_reached": whatsapp_sent >= cap, "logged_today": sent,
+        "in_hours": in_hours, "hours": hours, "now_ist": now_ist.strftime("%a %H:%M"),
+        "sender_name": get_setting(db, "sender_name") or "", "sender_link": get_setting(db, "sender_link") or "",
+        "max_messages_without_reply": int(get_setting(db, "max_messages_without_reply") or 2),
+    }
+
+
+def _whatsapp_today(db: Session) -> int:
+    from datetime import timedelta
+
+    ist_midnight = (utcnow() + timedelta(hours=5, minutes=30)).replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(hours=5, minutes=30)
+    n = 0
+    for p in db.scalars(select(Prospect).where(Prospect.last_contacted_at >= ist_midnight)).all():
+        n += sum(1 for c in p.contact_log or [] if c.get("at", "") >= ist_midnight.isoformat() and c.get("channel") == "whatsapp"
+                 and c.get("outcome") == "contacted")
+    return n
 
 
 @router.get("/prospects/summary")
@@ -439,9 +485,10 @@ def scan_overture(body: OvertureScanIn, db: Session = DB, who: str = Depends(act
 def export_csv(
     segment: str | None = None, status: str | None = None, area: str | None = None, has_website: bool | None = None,
     service: str | None = None, min_score: float | None = None, phone: str | None = None, need: str | None = None,
-    state: str | None = None, quality: str | None = None, focus: str | None = Query(None, pattern=FOCUS_PATTERN), db: Session = DB,
+    state: str | None = None, quality: str | None = None, focus: str | None = Query(None, pattern=FOCUS_PATTERN), real: str | None = Query("good", pattern="^(strong|good|any)$"),
+    db: Session = DB,
 ):
-    rows = db.scalars(_filtered(None, segment, status, area, None, has_website, service, min_score, phone, need, state, quality, focus).order_by(Prospect.score.desc()).limit(5000)).all()
+    rows = db.scalars(_filtered(None, segment, status, area, None, has_website, service, min_score, phone, need, state, quality, focus, real).order_by(Prospect.score.desc()).limit(5000)).all()
     buf = io.StringIO()
     w = csv.writer(buf)
     w.writerow(["name", "type", "segment", "need", "quality", "area", "state", "country", "score", "status", "phone", "phone_checked", "phone_type", "phone_confirmed", "email", "website", "address", "gaps", "services", "source"])
@@ -482,7 +529,9 @@ def audit_prospect(pid: int, db: Session = DB, who: str = Depends(actor)):
 
 @router.get("/prospects/{pid}/pitch")
 def prospect_pitch(pid: int, db: Session = DB):
-    return pitch(_get(db, pid))
+    from app.settings_store import get_setting
+
+    return pitch(_get(db, pid), sender_name=get_setting(db, "sender_name") or "", sender_link=get_setting(db, "sender_link") or "")
 
 
 @router.post("/prospects/{pid}/phone-verified", response_model=ProspectOut)
@@ -518,7 +567,10 @@ def set_social_activity(pid: int, activity: str | None = Query(None, pattern="^(
 @router.post("/prospects/{pid}/contact", response_model=ProspectOut)
 def log_contact(pid: int, body: ProspectContactIn, db: Session = DB, who: str = Depends(actor)):
     p = _get(db, pid)
-    record_contact(p, body.channel, body.outcome, body.note, who, callback_at=body.callback_at, qualification=body.qualification)
+    from app.settings_store import get_setting
+
+    record_contact(p, body.channel, body.outcome, body.note, who, callback_at=body.callback_at, qualification=body.qualification,
+                   max_unanswered=int(get_setting(db, "max_messages_without_reply") or 2))
     log_activity(db, "prospect", p.id, "contact_logged", body.model_dump(), who)
     db.commit()
     return p

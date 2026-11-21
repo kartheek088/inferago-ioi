@@ -17,14 +17,19 @@ const SERVICE: Record<string, string> = { website: "Website", marketing: "SEO & 
 const STATUS: Record<string, string> = { new: "New", contacted: "Contacted", no_answer: "No answer", callback: "Call back", interested: "Interested",
   qualified: "Qualified", proposal: "Proposal sent", won: "Won 🎉", not_interested: "Not interested", rejected: "Skip", shortlisted: "Shortlisted" };
 
-function wa(phone: string, name: string, branches: number) {
+function wa(phone: string, name: string, branches: number, sender: { name: string; link: string } | null) {
   const d = phone.replace(/\D/g, "");
-  const msg = `Hello ${name} team,\n\nI'm from Inferago Tech Services. I noticed you have ${branches} branches. We help multi-branch businesses with one website for all outlets, Google listings for every branch, and a simple CRM/WhatsApp system so enquiries from every branch are tracked in one place.\n\nCould I share a few ideas in a short call?\n\nThank you,\nInferago Tech Services`;
+  const me = sender?.name ? `I'm ${sender.name} from Inferago Tech Services` : "I'm from Inferago Tech Services";
+  const msg = `Hi ${name} team 🙏\n\n${me}, a small registered (Udyam MSME) tech team in Tamil Nadu. I noticed you have ${branches} branches. ` +
+    `I can show you, free, how one simple system could put every branch on Google and track all branch enquiries in one place.\n\n` +
+    `Shall I send it? Just reply yes. If you'd rather not hear from me, reply no and I won't message again.` +
+    (sender?.link ? `\n\nAbout us: ${sender.link}` : "");
   return `https://wa.me/${d}?text=${encodeURIComponent(msg)}`;
 }
 
 function Detail({ c, onChange }: { c: Chain; onChange: (c: Chain) => void }) {
   const act = useAction();
+  const sender = useApi(() => api.get<{ sender_name: string; sender_link: string }>("/prospects/outreach-status"));
   const [note, setNote] = useState("");
   const log = async (outcome: string, channel = "call") => {
     const r = await act.run(() => api.post<Chain>(`/multi-branch/${c.id}/contact`, { channel, outcome, note: note || null,
@@ -37,7 +42,7 @@ function Detail({ c, onChange }: { c: Chain; onChange: (c: Chain) => void }) {
       <div className="chips">{c.services.map((s) => <span key={s} className="chip on static">{SERVICE[s] ?? s}</span>)}</div>
       <div className="quick-actions">
         {c.phones.slice(0, 3).map((ph) => <a key={ph} className="btn sm" href={`tel:${ph}`}>📞 {ph}</a>)}
-        {c.phones[0] && <a className="btn sm" href={wa(c.phones[0], c.name, c.branch_count)} target="_blank" rel="noopener noreferrer">💬 WhatsApp</a>}
+        {c.phones[0] && <a className="btn sm" href={wa(c.phones[0], c.name, c.branch_count, sender.data ? { name: sender.data.sender_name, link: sender.data.sender_link } : null)} target="_blank" rel="noopener noreferrer">💬 WhatsApp</a>}
         {c.socials.slice(0, 2).map((s) => /^https?:/.test(s) && <a key={s} className="btn sm" href={s} target="_blank" rel="noopener noreferrer">👥 Page</a>)}
       </div>
       <details open className="small">

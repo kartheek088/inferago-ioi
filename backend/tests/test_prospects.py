@@ -540,3 +540,49 @@ def test_parallel_website_checks_keep_owner_rating(client, db, web):
     assert run.status == "success" and run.found == 3 and run.new == 3, run.log
     p0 = db.query(Prospect).filter_by(name="Site 0").one()
     assert p0.need_level == "upgrade" and p0.audit["social_activity"] == "very_active"  # owner's check survives
+
+
+def _mk_real(db, name, conf, **kw):
+    p = Prospect(name=name, segment="small_business", business_type="overture=dentist", type_label="Dentist", has_website=False,
+                 phone="9843012345", country="India", social_links=["https://www.facebook.com/123"], audit={}, gaps=[],
+                 recommended_services=["website"], source="overture", source_ref=f"o:{name}", source_url="https://explore.overturemaps.org/#17/1/1",
+                 raw_tags={"overture:confidence": str(conf), "overture:dataset": "meta", "overture:category": "dentist"},
+                 address="DB Road", area="Coimbatore", score=80, score_reasons=[], contact_log=[], need_reasons=[], status="new", **kw)
+    evaluate(p)
+    db.add(p)
+    db.commit()
+    return p
+
+
+def test_only_real_listings_by_default(client, db):
+    _mk_real(db, "Sure Dental", 0.85)
+    _mk_real(db, "Okay Dental", 0.65)
+    _mk_real(db, "Shaky Dental", 0.4)
+    names = lambda **q: {p["name"] for p in client.get("/api/prospects", params={"status": "", **q}).json()["items"]}  # noqa: E731
+    assert names() == {"Sure Dental", "Okay Dental"}  # default: sure they're real (≥ 0.6)
+    assert names(real="strong") == {"Sure Dental"}
+    assert names(real="any") == {"Sure Dental", "Okay Dental", "Shaky Dental"}
+
+
+def test_message_is_personal_honest_and_has_opt_out(client, db):
+    p = _mk_real(db, "Sure Dental", 0.85)
+    client.put("/api/settings", json={"sender_name": "Kumar", "sender_link": "https://instagram.com/inferago.example"})
+    d = client.get(f"/api/prospects/{p.id}/pitch").json()
+    m = d["soft_message"]
+    assert "I'm Kumar from Inferago Tech Services" in m and "Udyam MSME" in m
+    assert "your Facebook page" in m and "dentists in Coimbatore" in m
+    assert "reply no and I won't message again" in m and "https://instagram.com/inferago.example" in m
+    assert d["trust"]["level"] == "high" and d["trust"]["check_link"] == "https://www.facebook.com/123"
+    assert not d["is_follow_up"]
+
+
+def test_one_follow_up_then_stop(client, db):
+    p = _mk_real(db, "Sure Dental", 0.85)
+    r = client.post(f"/api/prospects/{p.id}/contact", json={"channel": "whatsapp", "outcome": "contacted"}).json()
+    assert r["next_follow_up"]  # one follow-up scheduled
+    d = client.get(f"/api/prospects/{p.id}/pitch").json()
+    assert d["is_follow_up"] and "gentle follow-up" in d["soft_message"]
+    r = client.post(f"/api/prospects/{p.id}/contact", json={"channel": "whatsapp", "outcome": "contacted"}).json()
+    assert r["next_follow_up"] is None and "not contacting again" in r["notes"]  # no third message
+    st = client.get("/api/prospects/outreach-status").json()
+    assert st["sent_today"] == 2 and st["cap"] == 25 and "in_hours" in st
