@@ -49,9 +49,10 @@ def test_scan_rules(db, tmp_path):
     run_overture_scan(db, run, str(f), max_keep=100)
     assert run.status == "success", run.log
     names = {p.name for p in db.query(Prospect).all()}
-    # kept: dentist (social, no site), college, Honda dealer, salon whose only "website" is Facebook
-    # skipped: hospital (website), Pakistani number, Myanmar listing, low confidence, Zudio chain, IT company
-    assert names == {"Kovai Smile Dental", "PSG College of Technology", "Sri Vari Honda", "FB Only Salon"}
+    # kept: dentist (social, no site), college, salon whose only "website" is Facebook
+    # skipped: hospital (website), Honda dealer (owner: dealers don't work out), Pakistani number, Myanmar listing,
+    #          low confidence, Zudio chain, IT company
+    assert names == {"Kovai Smile Dental", "PSG College of Technology", "FB Only Salon"}
     assert db.query(Prospect).filter_by(name="PSG College of Technology").one().segment == "college"
     dent = db.query(Prospect).filter_by(name="Kovai Smile Dental").one()
     assert dent.source == "overture" and dent.source_url.startswith("https://explore.overturemaps.org/#17/11.01")
@@ -156,3 +157,19 @@ def test_chains_api(client, db, monkeypatch, tmp_path):
     assert s["total"] == 1 and s["by_state"] == {"Tamil Nadu": 1}
     monkeypatch.setattr(api_mod, "map_folders", lambda: {"maps": tmp_path, "downloads": tmp_path})
     assert client.post("/api/multi-branch/find").status_code == 404  # no directory file yet
+
+
+def test_new_listing_mode(db, tmp_path):
+    import duckdb
+
+    f = tmp_path / "overture-india-2026-11-18.0.parquet"
+    _write(f)
+    prev = tmp_path / "overture-ids-2026-10-21.0.parquet"
+    duckdb.connect().execute(f"COPY (SELECT 'a1' AS id) TO '{prev}' (FORMAT parquet)")  # dentist existed last month
+    run = ProspectRun(areas=["x"], status="running", log=[])
+    db.add(run)
+    db.commit()
+    run_overture_scan(db, run, str(f), max_keep=100, mode="new", prev_ids=str(prev))
+    names = {p.name for p in db.query(Prospect).all()}
+    assert "Kovai Smile Dental" not in names and "FB Only Salon" in names
+    assert all(p.new_listing for p in db.query(Prospect).all())

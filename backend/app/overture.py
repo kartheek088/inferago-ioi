@@ -182,7 +182,8 @@ def to_parsed(row: dict):
     tags = {"name": name, "addr:full": row.get("address") or "", "addr:city": row.get("locality") or "",
             "addr:postcode": row.get("postcode") or "", "overture:category": row.get("category") or row.get("basic_category") or "",
             "overture:confidence": str(round(row.get("confidence") or 0, 2)), "overture:dataset": row.get("dataset") or "",
-            "overture:country": row.get("country") or "", "addr:state": row.get("region") or ""}
+            "overture:country": row.get("country") or "", "addr:state": row.get("region") or "",
+            "overture:new": "1" if row.get("is_new") else ""}
     if row.get("brand"):
         tags["brand"] = row["brand"]
     if dealer_shop:
@@ -191,7 +192,9 @@ def to_parsed(row: dict):
         tags.pop("shop", None)  # manufacturers with a brand are usually the brand owner, not a dealer
         if row.get("brand"):
             return None
-    if exclusion_reason(tags, name, key if key.startswith("office=") else None) or extra_exclusion(name, biz.label, biz.segment):
+    if real_sites:
+        tags["overture:website"] = real_sites[0]
+    if exclusion_reason(tags, name, key if key.startswith("office=") else None, biz.label) or extra_exclusion(name, biz.label, biz.segment):
         return None
     lat, lon = row.get("lat"), row.get("lon")
     return ParsedProspect(
@@ -202,7 +205,7 @@ def to_parsed(row: dict):
 
 
 def run_overture_scan(db, run, path: str, *, max_keep: int, min_confidence: float = 0.3, cities: list[str] | None = None,
-                      radius_km: float = 15.0, rules=None, mode: str = "no_website"):
+                      radius_km: float = 15.0, rules=None, mode: str = "no_website", prev_ids: str | None = None):
     from app.db import utcnow
     from app.prospects import SearchRules, _dropped_text, _km, _place_name, nearest_city, resolve_area, upsert
 
@@ -218,7 +221,7 @@ def run_overture_scan(db, run, path: str, *, max_keep: int, min_confidence: floa
     try:
         import duckdb
 
-        log(f"Reading {Path(path).name} ({ {'no_website': 'businesses without a website', 'upgrade': 'businesses whose website may need an upgrade', 'colleges': 'colleges and universities'}.get(mode, mode)}). This usually takes 1–5 minutes…")
+        log(f"Reading {Path(path).name} ({ {'no_website': 'businesses without a website', 'upgrade': 'businesses whose website may need an upgrade', 'colleges': 'colleges and universities', 'new': 'newly listed businesses without a website'}.get(mode, mode)}). This usually takes 1–5 minutes…")
         con = duckdb.connect()
         where = [f"confidence >= {float(min_confidence)}", "country = 'IN'"]  # the download box also covers neighbours
         real_sites = ("len(list_filter(coalesce(websites, []), lambda w: NOT regexp_matches(lower(w), "
@@ -232,13 +235,20 @@ def run_overture_scan(db, run, path: str, *, max_keep: int, min_confidence: floa
             rules.only_no_website, rules.only_with_website = False, True
         elif rules.only_no_website:
             where.append(f"({real_sites} = 0 OR {is_college})")
+        new_expr = "FALSE"
+        if prev_ids and Path(prev_ids).is_file():
+            new_expr = f"id NOT IN (SELECT id FROM read_parquet('{prev_ids}'))"
+            if mode == "new":
+                where.append(new_expr)
+        elif mode == "new":
+            raise RuntimeError("The previous month's directory IDs are needed to find new businesses; download them first.")
         if centres:
             boxes = []
             for _, lat, lon, _c in centres:
                 dlat, dlon = radius_km / 111.0, radius_km / 111.0 / max(0.2, __import__("math").cos(__import__("math").radians(lat)))
                 boxes.append(f"(lat BETWEEN {lat - dlat} AND {lat + dlat} AND lon BETWEEN {lon - dlon} AND {lon + dlon})")
             where.append("(" + " OR ".join(boxes) + ")")
-        cur = con.execute(f"SELECT * FROM read_parquet('{path}') WHERE {' AND '.join(where)}")
+        cur = con.execute(f"SELECT *, {new_expr} AS is_new FROM read_parquet('{path}') WHERE {' AND '.join(where)}")
         cols = [d[0] for d in cur.description]
         buckets: dict[tuple, list] = {}  # sort key → candidates; each capped at max_keep so memory stays small
         dropped: dict[str, int] = {}
@@ -260,7 +270,7 @@ def run_overture_scan(db, run, path: str, *, max_keep: int, min_confidence: floa
                     dropped[why] = dropped.get(why, 0) + 1
                     continue
                 found += 1
-                k = (not pp.social, -pp.biz.tier, not pp.tags.get("addr:full"))
+                k = (not pp.tags.get("overture:new"), not pp.social, -pp.biz.tier, not pp.tags.get("addr:full"))
                 b = buckets.setdefault(k, [])
                 if len(b) < max_keep:
                     b.append(pp)
@@ -296,3 +306,17 @@ def run_overture_scan(db, run, path: str, *, max_keep: int, min_confidence: floa
         run.finished_at = utcnow()
         db.commit()
     return run
+
+
+def download_ids(release: str, out: Path, country: str = "India") -> int:
+    """IDs of a release's places with a phone (for 'newly listed' = in this release but not the previous one)."""
+    xmin, ymin, xmax, ymax = COUNTRY_BBOX[country]
+    tmp = out.with_suffix(".part")
+    con = connect()
+    con.execute(f"""
+        COPY (SELECT id FROM read_parquet('{S3_PLACES.format(release=release)}', hive_partitioning=0)
+              WHERE bbox.xmin BETWEEN {xmin} AND {xmax} AND bbox.ymin BETWEEN {ymin} AND {ymax}
+                AND phones IS NOT NULL AND len(phones) > 0) TO '{tmp}' (FORMAT parquet)""")
+    n = con.execute(f"SELECT count(*) FROM read_parquet('{tmp}')").fetchone()[0]
+    os.replace(tmp, out)
+    return int(n)

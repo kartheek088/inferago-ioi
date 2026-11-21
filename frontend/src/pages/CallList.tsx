@@ -5,7 +5,10 @@ import { NeedBadge, PhoneBadge, Prospect } from "./Prospects";
 
 interface Next { prospect: Prospect | null; reason: string | null; remaining_new: number | null }
 interface Summary { calls_today: Record<string, number>; by_state: Record<string, number> }
-interface Pitch { message: string; call_script: string; links: { call: string | null; whatsapp: string | null; email: string | null; map: string } }
+interface Pitch { message: string; soft_message: string; niche_label: string | null; call_script: string; if_rude: string;
+  links: { call: string | null; whatsapp: string | null; email: string | null; map: string } }
+export const FOCUS: [string, string][] = [["", "All"], ["new", "🆕 New businesses"], ["hidden", "💎 Hidden gems"], ["shops", "🛒 Shops & bazaars"],
+  ["real_estate", "🏠 Real estate"], ["delivery", "🚚 Delivery"], ["art", "🎨 Art & craft"], ["partners", "🤝 Referral partners"]];
 
 const TARGET = 30;
 const NEEDS = [["website", "Website"], ["upgrade", "Website upgrade"], ["marketing", "SEO / Google"], ["crm", "CRM / leads"], ["ai", "WhatsApp / AI bot"],
@@ -59,6 +62,8 @@ export default function CallList() {
   const [state, setState] = useState<string>(() => readPref("state", ""));
   const [quality, setQuality] = useState<string>(() => readPref("quality", "good"));
   const [mobileOnly, setMobileOnly] = useState<boolean>(() => readPref("mobile", true));
+  const [focus, setFocus] = useState<string>(() => readPref("focus", ""));
+  const [channel, setChannel] = useState<"whatsapp" | "call">(() => readPref("channel", "whatsapp"));
   const [skipped, setSkipped] = useState<number[]>([]);
   const [next, setNext] = useState<Next | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -70,23 +75,24 @@ export default function CallList() {
   const p = next?.prospect ?? null;
   const pitch = useApi(() => (p ? api.get<Pitch>(`/prospects/${p.id}/pitch`) : Promise.resolve(null)), [p?.id]);
 
-  useEffect(() => { writePref("group", group); writePref("state", state); writePref("quality", quality); writePref("mobile", mobileOnly); }, [group, state, quality, mobileOnly]);
+  useEffect(() => { writePref("group", group); writePref("state", state); writePref("quality", quality); writePref("mobile", mobileOnly); writePref("focus", focus); writePref("channel", channel); },
+    [group, state, quality, mobileOnly, focus, channel]);
 
   const load = useCallback(async (extraSkip: number[] = []) => {
     setErr(null);
     setMode("idle"); setNote(""); setCbWhen("");
     try {
       setNext(await api.get<Next>("/prospects/next", {
-        group, state, quality, phone: mobileOnly ? "mobile" : "usable", exclude: [...skipped, ...extraSkip].join(","),
+        group, state, quality, focus, phone: mobileOnly || channel === "whatsapp" ? "mobile" : "usable", exclude: [...skipped, ...extraSkip].join(","),
         need: group === "no_website" ? "likely" : undefined,
       }));
     } catch (e) { setErr(String(e)); }
-  }, [group, state, quality, mobileOnly, skipped]);
-  useEffect(() => { load(); }, [group, state, quality, mobileOnly]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [group, state, quality, mobileOnly, focus, channel, skipped]);
+  useEffect(() => { load(); }, [group, state, quality, mobileOnly, focus, channel]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const log = async (outcome: string, extra: Record<string, unknown> = {}) => {
     if (!p) return;
-    const r = await act.run(() => api.post(`/prospects/${p.id}/contact`, { channel: "call", outcome, note: note || null, ...extra }));
+    const r = await act.run(() => api.post(`/prospects/${p.id}/contact`, { channel, outcome, note: note || null, ...extra }));
     if (r !== undefined) { summary.reload(); load(); }
   };
   const skip = () => { if (p) { setSkipped((s) => [...s, p.id]); load([p.id]); } };
@@ -100,7 +106,10 @@ export default function CallList() {
     const onKey = (e: KeyboardEvent) => {
       if (!p || mode !== "idle" || (e.target as HTMLElement)?.tagName === "INPUT" || (e.target as HTMLElement)?.tagName === "TEXTAREA") return;
       const k = e.key.toLowerCase();
-      if (k === "1") log("no_answer");
+      if (channel === "whatsapp" && k === "1") log("contacted");
+      else if (channel === "whatsapp" && k === "2") log("callback", { callback_at: callbackPreset(14), note: note || "replied: not now" });
+      else if (channel === "whatsapp" && k === "5") log("rejected", { note: note || "not on WhatsApp / wrong number" });
+      else if (k === "1") log("no_answer");
       else if (k === "2") setMode("callback");
       else if (k === "3") log("not_interested");
       else if (k === "4") setMode("interested");
@@ -119,11 +128,11 @@ export default function CallList() {
     <>
       <header className="page-header">
         <div>
-          <h1>Call list</h1>
-          <p className="muted">One business at a time: call or WhatsApp, tap what happened, then go to the next. Follow-ups due come first.</p>
+          <h1>Outreach list</h1>
+          <p className="muted">One business at a time. Start with a friendly WhatsApp that offers something free (no cold-call pressure), tap what happened, go to the next. Follow-ups due come first.</p>
         </div>
         <div className="today-meter" title="Calls logged today">
-          <div className="row between small"><strong>Today</strong><span>{today.total} / {TARGET}</span></div>
+          <div className="row between small"><strong>Today</strong><span>{today.total} / {TARGET} reached</span></div>
           <div className="bar"><div className="fill" style={{ width: `${Math.min(100, (100 * today.total) / TARGET)}%` }} /></div>
           <div className="xs muted">{today.interested ?? 0} interested · {today.qualified ?? 0} qualified · {today.callback ?? 0} callbacks · {today.no_answer ?? 0} no answer</div>
         </div>
@@ -132,7 +141,15 @@ export default function CallList() {
       <div className="seg-tabs">
         {GROUPS.map(([k, v]) => <button key={k} className={`seg ${group === k ? "on" : ""}`} onClick={() => { setSkipped([]); setGroup(k); }}>{v}</button>)}
       </div>
+      <div className="row gap-s" style={{ margin: "4px 0 10px", flexWrap: "wrap" }}>
+        <span className="small muted">Focus:</span>
+        {FOCUS.map(([k, v]) => <button key={k} className={`chip ${focus === k ? "on" : ""}`} onClick={() => { setSkipped([]); setFocus(k); }}>{v}</button>)}
+      </div>
       <div className="filters">
+        <div className="seg-tabs" style={{ margin: 0 }}>
+          <button className={`seg ${channel === "whatsapp" ? "on" : ""}`} onClick={() => setChannel("whatsapp")}>💬 WhatsApp first</button>
+          <button className={`seg ${channel === "call" ? "on" : ""}`} onClick={() => setChannel("call")}>📞 Call</button>
+        </div>
         <select value={state} onChange={(e) => { setSkipped([]); setState(e.target.value); }} aria-label="State">
           <option value="">All states</option>
           {states.map((s) => <option key={s} value={s}>{s} ({summary.data?.by_state[s]})</option>)}
@@ -142,7 +159,7 @@ export default function CallList() {
           <option value="good">Good and established</option>
           <option value="any">Include small businesses</option>
         </select>
-        <label className="check"><input type="checkbox" checked={mobileOnly} onChange={(e) => setMobileOnly(e.target.checked)} /> Mobile numbers only (WhatsApp works)</label>
+        {channel === "call" && <label className="check"><input type="checkbox" checked={mobileOnly} onChange={(e) => setMobileOnly(e.target.checked)} /> Mobile numbers only</label>}
       </div>
 
       {err && <ErrorBox error={err} onRetry={() => load()} />}
@@ -167,8 +184,9 @@ export default function CallList() {
           </div>
 
           <div className="call-actions">
-            {pitch.data?.links.call && <a className="btn primary big" href={pitch.data.links.call}>📞 Call {p.phone_normalized} <kbd>C</kbd></a>}
-            {pitch.data?.links.whatsapp && <a className="btn big" href={pitch.data.links.whatsapp} target="_blank" rel="noopener noreferrer">💬 WhatsApp <kbd>W</kbd></a>}
+            {channel === "whatsapp" && pitch.data?.links.whatsapp && <a className="btn primary big" href={pitch.data.links.whatsapp} target="_blank" rel="noopener noreferrer">💬 Open WhatsApp with message <kbd>W</kbd></a>}
+            {pitch.data?.links.call && <a className={`btn big ${channel === "call" ? "primary" : ""}`} href={pitch.data.links.call}>📞 Call {p.phone_normalized} <kbd>C</kbd></a>}
+            {channel === "call" && pitch.data?.links.whatsapp && <a className="btn big" href={pitch.data.links.whatsapp} target="_blank" rel="noopener noreferrer">💬 WhatsApp <kbd>W</kbd></a>}
             {p.social_links[0] && /^https?:/.test(p.social_links[0]) && <a className="btn big" href={p.social_links[0]} target="_blank" rel="noopener noreferrer">👥 Their page</a>}
             {p.website && <a className="btn big" href={/^https?:/.test(p.website) ? p.website : `http://${p.website}`} target="_blank" rel="noopener noreferrer">🌐 Their site</a>}
           </div>
@@ -180,15 +198,26 @@ export default function CallList() {
               {p.gaps.length > 0 && <div className="chips tight" style={{ marginTop: 6 }}>{p.gaps.slice(0, 5).map((g) => <span key={g.key} className="chip warn static">{g.label}</span>)}</div>}
             </div>
             <div>
-              <h3>What to say</h3>
-              <p className="small script">{pitch.data?.call_script ?? "…"}</p>
+              <h3>{channel === "whatsapp" ? "WhatsApp message (edit before sending)" : "What to say"}{pitch.data?.niche_label && <span className="badge info" style={{ marginLeft: 6 }}>{pitch.data.niche_label}</span>}</h3>
+              <p className="small script" style={{ whiteSpace: "pre-wrap" }}>{(channel === "whatsapp" ? pitch.data?.soft_message : pitch.data?.call_script) ?? "…"}</p>
+              {channel === "call" && pitch.data?.if_rude && <p className="xs muted">If they're rude: {pitch.data.if_rude}</p>}
               {p.contact_log.length > 0 && <p className="xs muted">Last time: {p.contact_log[p.contact_log.length - 1].outcome.replace("_", " ")}{p.contact_log[p.contact_log.length - 1].note ? ` — ${p.contact_log[p.contact_log.length - 1].note}` : ""}</p>}
             </div>
           </div>
 
           <input placeholder="Note (optional): who you spoke to, what they said" value={note} onChange={(e) => setNote(e.target.value)} style={{ width: "100%" }} />
 
-          {mode === "idle" && (
+          {mode === "idle" && channel === "whatsapp" && (
+            <div className="outcomes">
+              <button className="btn primary" disabled={act.busy} onClick={() => log("contacted")}>✓ Sent, wait for reply <kbd>1</kbd></button>
+              <button className="btn good" disabled={act.busy} onClick={() => setMode("interested")}>Replied: interested <kbd>4</kbd></button>
+              <button className="btn" disabled={act.busy} onClick={() => log("callback", { callback_at: callbackPreset(14), note: note || "replied: not now" })}>Replied: not now <kbd>2</kbd></button>
+              <button className="btn" disabled={act.busy} onClick={() => log("not_interested")}>Replied: not interested <kbd>3</kbd></button>
+              <button className="btn danger" disabled={act.busy} onClick={() => log("rejected", { note: note || "not on WhatsApp / wrong number" })}>Not on WhatsApp <kbd>5</kbd></button>
+              <button className="btn" disabled={act.busy} onClick={skip}>Skip <kbd>S</kbd></button>
+            </div>
+          )}
+          {mode === "idle" && channel === "call" && (
             <div className="outcomes">
               <button className="btn" disabled={act.busy} onClick={() => log("no_answer")}>No answer <kbd>1</kbd></button>
               <button className="btn" disabled={act.busy} onClick={() => setMode("callback")}>Call back later <kbd>2</kbd></button>
@@ -213,7 +242,9 @@ export default function CallList() {
           {mode === "interested" && (
             <Qualify busy={act.busy} onSave={(q, ok) => log(ok ? "qualified" : "interested", { qualification: q })} />
           )}
-          <p className="xs muted">Shortcuts: C call · W WhatsApp · 1 no answer · 2 call back · 3 not interested · 4 interested · 5 wrong number · S skip</p>
+          <p className="xs muted">{channel === "whatsapp"
+            ? "Shortcuts: W open WhatsApp · 1 sent · 4 interested · 2 not now · 3 not interested · 5 not on WhatsApp · S skip. Sent messages come back as follow-ups in 3 days."
+            : "Shortcuts: C call · W WhatsApp · 1 no answer · 2 call back · 3 not interested · 4 interested · 5 wrong number · S skip"}</p>
         </section>
       )}
     </>

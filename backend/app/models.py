@@ -609,6 +609,7 @@ class Prospect(TimestampMixin, Base):
     social_links: Mapped[list[str]] = mapped_column(JSON, default=list)
     opening_hours: Mapped[str | None] = mapped_column(String(300))
     has_website: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    new_listing: Mapped[bool] = mapped_column(Boolean, default=False, index=True)  # not in the previous directory release
     source: Mapped[str] = mapped_column(String(40), default="openstreetmap")
     source_ref: Mapped[str] = mapped_column(String(100))  # e.g. "osm:node/123"
     source_url: Mapped[str] = mapped_column(String(2048))

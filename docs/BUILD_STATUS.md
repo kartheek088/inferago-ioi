@@ -43,6 +43,20 @@ _Last updated: 2026-11-21_
   "Number works" is set only by a human: the confirm button, or a call/WhatsApp logged as interested, not interested or won.
   WhatsApp links are offered only for mobile numbers. Map files over 300 MB use a temporary disk index instead of RAM;
   a file still being written (modified in the last 2 minutes) cannot be scanned.
+- **WhatsApp-first outreach, focus lists, new businesses, no dealers (2026-11-22, later).**
+  - The Call list is now an *Outreach list* with **WhatsApp first** as the default. The message is soft and value-first: a free sample
+    homepage, a free website-fix list, a free billing-app demo for shops, or a referral partnership for CAs, architects and
+    planners. Outcomes: sent (follow up in 3 days), replied interested (qualify), not now (in 14 days), not interested, not on
+    WhatsApp. Call mode remains, with a tip for handling rude replies.
+  - *Focus lists* (`focus=`): new businesses, hidden gems (good business, no website, no social page), shops & bazaars (pitch: own
+    billing and barcode software, no monthly fees), real estate, delivery & logistics, art & craft, referral partners.
+    Matched on the business type; each has its own pitch angle (`NICHES`, `niche_of`).
+  - *New businesses*: IDs of the previous Overture release (`overture-ids-<release>.parquet`) are compared with the current one;
+    places not in the previous release are flagged `new_listing` (newly listed, likely new or newly online). Scan mode `new`.
+  - *Dealers dropped* (owner: they don't work out). This covers vehicle, mobile/electronics and tyre dealers, plus businesses whose
+    "website" is a big company's store-locator page (chain branches). Existing records are auto-skipped with a reason, which can be undone.
+  - Website checks run 8 at a time, and the owner's social-media rating survives re-checks. SafeHttp now limits total download
+    time per response, so slow-drip servers can't hang a job.
 - **Call list, qualification, quality, states, upgrades, colleges, multi-branch (2026-11-22).**
   - *Call list* (`/call`): one prospect at a time from `/api/prospects/next`. Due follow-ups come first, then the best new one
     for the chosen group (no website / website upgrade / colleges), state and quality. There are tel: and wa.me buttons and a call script.

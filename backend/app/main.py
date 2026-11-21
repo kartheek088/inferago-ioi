@@ -63,7 +63,7 @@ def _recover_prospect_runs(db) -> None:
         # Apply the chain / college / IT / government rules to prospects found before those rules existed.
         if p.segment != "college" and p.type_label in ("School", "Coaching / training") and _COLLEGE_NAMES.search(p.name or ""):
             p.segment, p.type_label = "college", "College / university"
-        why = exclusion_reason(p.raw_tags or {}, p.name, p.business_type)
+        why = exclusion_reason({**(p.raw_tags or {}), "website": p.website or ""}, p.name, p.business_type, p.type_label)
         if not why and p.source == "overture":
             why = extra_exclusion(p.name, p.type_label, p.segment)
         if not why and p.status == "rejected" and (p.notes or "").startswith("Auto-skipped:"):

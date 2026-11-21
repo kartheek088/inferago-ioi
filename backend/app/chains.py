@@ -73,7 +73,7 @@ def build_chain(g: dict[str, Any]) -> dict[str, Any] | None:
     if c is None:
         return None
     _, biz, _ = c
-    if _CHAIN_NAMES.search(name) or exclusion_reason({}, name, None) or extra_exclusion(name, biz.label, biz.segment):
+    if _CHAIN_NAMES.search(name) or exclusion_reason({}, name, None, biz.label) or extra_exclusion(name, biz.label, biz.segment):
         return None
     phones = []
     for b in branches:
@@ -84,6 +84,10 @@ def build_chain(g: dict[str, Any]) -> dict[str, Any] | None:
         return None
     socials = sorted({s for b in branches for s in (b["socials"] or [])} | {w for b in branches for w in (b["websites"] or []) if _is_social(w)})
     sites = sorted({w for b in branches for w in (b["websites"] or []) if not _is_social(w)})
+    from app.prospects import LOCATOR_SITE
+
+    if any(LOCATOR_SITE.search(w) for w in sites):
+        return None  # branches of a bigger company (store-locator pages)
     states = Counter(state_from_code(b["region"]) for b in branches if state_from_code(b["region"]))
     cities = sorted({b["city"] for b in branches if b["city"]})
     nloc = int(g["nloc"])
@@ -144,6 +148,13 @@ def run_chain_search(db: Session, run: ProspectRun, path: str, max_keep: int = 2
         built = [c for c in (build_chain(g) for g in groups) if c]
         built.sort(key=lambda c: -c["score"])
         keep = built[:max_keep]
+        keys = {c["key"] for c in keep}
+        retired = 0
+        for row in db.scalars(select(BusinessChain).where(BusinessChain.status == "new")):
+            if row.key not in keys:  # no longer matches the rules (e.g. dealers dropped): hide it, keep the record
+                row.status, row.notes, retired = "rejected", "Auto-skipped: no longer matches the rules.", retired + 1
+        if retired:
+            log(f"…{retired:,} earlier entries no longer match the rules and were hidden")
         new = 0
         for i, c in enumerate(keep, 1):
             row = db.scalar(select(BusinessChain).where(BusinessChain.key == c["key"]))

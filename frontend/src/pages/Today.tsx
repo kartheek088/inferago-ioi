@@ -30,7 +30,7 @@ export default function Today() {
           <p className="muted">Here’s what needs you today. Start at the top and work down.</p>
         </div>
         <div className="row gap">
-          <Link className="btn primary" to="/call">📞 Start calling</Link>
+          <Link className="btn primary" to="/call">💬 Start outreach</Link>
           <Link className="btn" to="/prospects">Prospects</Link>
           <Link className="btn" to="/discover">Find projects & tenders</Link>
         </div>

@@ -2,6 +2,8 @@ import { lazy, Suspense, useEffect, useState } from "react";
 import { api } from "../api";
 import { Empty, ErrorBox, ExtLink, Loading, Msg, Pager, fmtDate, useAction, useApi } from "../components/ui";
 
+import { FOCUS } from "./CallList";
+
 const ProspectMap = lazy(() => import("../components/ProspectMap"));
 
 export interface Gap { key: string; label: string; detail: string }
@@ -25,6 +27,7 @@ export interface Prospect {
   social_links: string[];
   opening_hours: string | null;
   has_website: boolean;
+  new_listing: boolean;
   source_url: string;
   gaps: Gap[];
   recommended_services: string[];
@@ -44,7 +47,7 @@ export interface Prospect {
   contact_log: { at: string; channel: string; outcome: string; note: string | null }[];
 }
 interface Page { items: Prospect[]; total: number; limit: number; offset: number }
-interface Summary { total: number; no_website: number; hot: number; definite: number; by_state: Record<string, number>; by_need: Record<string, number>; by_quality: Record<string, number>; follow_ups_due: number; by_segment: Record<string, number>; services: Record<string, string> }
+interface Summary { total: number; no_website: number; hot: number; definite: number; new_listings: number; by_state: Record<string, number>; by_need: Record<string, number>; by_quality: Record<string, number>; follow_ups_due: number; by_segment: Record<string, number>; services: Record<string, string> }
 interface Areas { groups: Record<string, string[]>; selected: string[]; radius_m: number; max_per_area: number }
 interface Run { id: number; areas: string[]; status: string; found: number; new: number; updated: number; log: string[]; started_at: string; finished_at: string | null }
 interface Pitch { subject: string; message: string; call_script: string; links: { call: string | null; whatsapp: string | null; email: string | null; map: string }; note: string }
@@ -417,7 +420,8 @@ function ProspectDrawer({ p, onClose, onChange }: { p: Prospect; onClose: () => 
             <ScoreRing score={p.score} />
             <div style={{ minWidth: 0 }}>
               <h2 className="wrap">{p.name}</h2>
-              <div className="muted small">{p.type_label} · {p.area ?? "—"}{p.country ? `, ${p.country}` : ""}</div>
+              {p.new_listing && <span className="badge good" style={{ marginRight: 4 }}>🆕 New</span>}
+          <div className="muted small">{p.type_label} · {p.area ?? "—"}{p.country ? `, ${p.country}` : ""}</div>
             </div>
           </div>
           <button className="btn sm" onClick={onClose} aria-label="Close">✕</button>
@@ -592,6 +596,7 @@ export default function Prospects() {
   const [group, setGroup] = useState<"none" | "upgrade" | "colleges">("none");
   const [quality, setQuality] = useState("good");
   const [stateF, setStateF] = useState("");
+  const [focus, setFocus] = useState("");
   const [service, setService] = useState("");
   const [q, setQ] = useState("");
   const [offset, setOffset] = useState(0);
@@ -604,10 +609,10 @@ export default function Prospects() {
       : group === "colleges" ? { segment: "college" }
       : { segment, need, has_website: noSite ? false : undefined };
   const list = useApi(
-    () => api.get<Page>("/prospects", { ...groupFilters(), status, area, q, service, phone, quality, state: stateF, offset, limit: 30 }),
-    [segment, status, area, q, service, noSite, phone, need, group, quality, stateF, offset],
+    () => api.get<Page>("/prospects", { ...groupFilters(), status, area, q, service, phone, quality, state: stateF, focus, offset, limit: 30 }),
+    [segment, status, area, q, service, noSite, phone, need, group, quality, stateF, focus, offset],
   );
-  useEffect(() => setOffset(0), [segment, status, area, q, service, noSite, phone, need, group, quality, stateF]);
+  useEffect(() => setOffset(0), [segment, status, area, q, service, noSite, phone, need, group, quality, stateF, focus]);
   const s = summary.data;
   useEffect(() => { if (s && s.total === 0) setShowFind(true); }, [s?.total]);  // nothing yet → show the finder
   const refresh = () => { list.reload(); summary.reload(); };
@@ -638,6 +643,10 @@ export default function Prospects() {
           <button key={k} className={`seg ${group === k ? "on" : ""}`} onClick={() => setGroup(k)}>{label}{n != null && <span className="seg-count">{Number(n).toLocaleString()}</span>}</button>
         ))}
       </div>
+      {group !== "colleges" && <div className="row gap-s" style={{ margin: "0 0 10px", flexWrap: "wrap" }}>
+        <span className="small muted">Focus:</span>
+        {FOCUS.map(([k, v]) => <button key={k} className={`chip ${focus === k ? "on" : ""}`} onClick={() => setFocus(k)}>{v}{k === "new" && s?.new_listings ? ` (${s.new_listings.toLocaleString()})` : ""}</button>)}
+      </div>}
       {group === "upgrade" && <UpgradeBar onDone={refresh} pending={s?.by_need?.check_site ?? 0} need={need} setNeed={setNeed} />}
       {group === "none" && <div className="seg-tabs" role="tablist">
         {SEGMENTS.filter((sg) => sg.id !== "college").map((sg) => (
@@ -690,7 +699,7 @@ export default function Prospects() {
       {view === "map" && (
         <Suspense fallback={<Loading />}>
           <ProspectMap
-            filters={{ ...groupFilters(), status, q, service, phone, quality, state: stateF }}
+            filters={{ ...groupFilters(), status, q, service, phone, quality, state: stateF, focus }}
             onOpen={async (id) => { try { setOpen(await api.get<Prospect>(`/prospects/${id}`)); } catch { /* ignore */ } }}
           />
         </Suspense>

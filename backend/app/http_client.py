@@ -157,6 +157,7 @@ class SafeHttp:
         self.rate_limit = rate_limit_per_minute
         self.respect_robots = respect_robots
         self.max_bytes = max_bytes or s.http_max_bytes
+        self.max_seconds = s.http_timeout_seconds * 3  # total time for one response body
         self.allow_private = allow_private
         self.user_agent = s.http_user_agent
         self.requests_made = 0
@@ -202,10 +203,13 @@ class SafeHttp:
                     if declared and declared.isdigit() and int(declared) > self.max_bytes:
                         raise FetchError(f"Response too large ({declared} bytes)")
                     buf = bytearray()
+                    started = time.monotonic()
                     for chunk in resp.iter_bytes():
                         buf.extend(chunk)
                         if len(buf) > self.max_bytes:
                             raise FetchError(f"Response exceeded {self.max_bytes} bytes")
+                        if time.monotonic() - started > self.max_seconds:  # slow-drip servers never trip the read timeout
+                            raise FetchError(f"Took longer than {self.max_seconds:.0f}s to download {current}")
                     return FetchResult(
                         url=current,
                         status_code=resp.status_code,

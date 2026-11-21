@@ -191,31 +191,46 @@ def _run_website_checks(run_id: int, limit: int, state: str | None, segment: str
         todo = db.scalars(stmt.order_by(Prospect.score.desc()).limit(limit)).all()
         run.log = [f"Checking {len(todo)} websites (homepage only, robots.txt respected)…"]
         db.commit()
-        http = SafeHttp(rate_limit_per_minute=30)
-        upgrade = 0
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        import threading
+
+        from app.prospects import apply_audit, fetch_audit
+
+        local = threading.local()
+
+        def work(pid: int, website: str):
+            if not hasattr(local, "http"):
+                local.http = SafeHttp(rate_limit_per_minute=30)  # one per thread; different sites run in parallel
+            return pid, fetch_audit(website, local.http)
+
+        upgrade, done = 0, 0
+        by_id = {p.id: p for p in todo}
         try:
-            for i, p in enumerate(todo, 1):
-                db.refresh(run, ["status"])
-                if run.status == "stopping":
-                    run.log = [*run.log, "Stopped by you."]
-                    run.status = "stopped"
-                    break
-                audit_website(db, p, http=http)
-                upgrade += int(p.need_level == "upgrade")
-                run.found = i
-                if i % 10 == 0:
-                    run.log = [*run.log[:1], f"…checked {i} of {len(todo)}; {upgrade} need an upgrade so far"]
-                    db.commit()
-            else:
-                run.status = "success"
+            with ThreadPoolExecutor(max_workers=8, thread_name_prefix="ioi-audit") as pool:
+                futures = [pool.submit(work, p.id, p.website) for p in todo]
+                for fut in as_completed(futures):
+                    pid, audit = fut.result()
+                    apply_audit(by_id[pid], audit)  # DB work stays on this thread
+                    done += 1
+                    upgrade += int(by_id[pid].need_level == "upgrade")
+                    run.found = done
+                    if done % 10 == 0:
+                        run.log = [*run.log[:1], f"…checked {done} of {len(todo)}; {upgrade} need an upgrade so far"]
+                        db.commit()
+                        db.refresh(run, ["status"])
+                        if run.status == "stopping":
+                            for f in futures:
+                                f.cancel()
+                            run.log = [*run.log, "Stopped by you."]
+                            break
+            run.status = "stopped" if run.status == "stopping" else "success"
             run.new = upgrade
-            run.log = [*run.log[:1], f"✓ Checked {run.found} websites: {upgrade} are broken or weak (need an upgrade)."]
+            run.log = [*run.log[:1], f"✓ Checked {done} websites: {upgrade} are broken or weak (need an upgrade)."]
         except Exception as exc:  # noqa: BLE001
             log.exception("Website checks failed")
             db.rollback()
             run.status, run.log = "failed", [*(run.log or []), f"✗ {str(exc)[:300]}"]
         finally:
-            http.close()
             run.finished_at = utcnow()
             db.commit()
 

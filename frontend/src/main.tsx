@@ -24,7 +24,7 @@ import MultiBranch from "./pages/MultiBranch";
 
 const MAIN_NAV: { to: string; label: string; icon: string; hint: string }[] = [
   { to: "/", label: "Today", icon: "☀️", hint: "What to do now" },
-  { to: "/call", label: "Call list", icon: "📞", hint: "Call, log and qualify one by one" },
+  { to: "/call", label: "Outreach list", icon: "💬", hint: "WhatsApp / call, log and qualify one by one" },
   { to: "/prospects", label: "Prospects", icon: "🎯", hint: "No website, weak website, colleges" },
   { to: "/multi-branch", label: "Multi-branch", icon: "🏬", hint: "Local chains with several branches" },
   { to: "/big-projects", label: "Big projects", icon: "🏗️", hint: "New private projects where we fit" },

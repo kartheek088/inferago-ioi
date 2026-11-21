@@ -31,7 +31,7 @@ from app.models import Prospect, ProspectRun
 from app.profile import SERVICE_KEYS
 
 # Bump when scoring / exclusion rules change: existing prospects are then re-checked once at startup.
-RULES_VERSION = "2026-11-22.6"
+RULES_VERSION = "2026-11-22.8"
 
 OVERPASS_ENDPOINTS = [
     "https://overpass.private.coffee/api/interpreter",
@@ -322,8 +322,48 @@ DEALER_SHOPS = {"car", "motorcycle", "car_repair", "motorcycle_repair", "tyres",
                 "appliance", "hardware", "doityourself", "agrarian", "furniture", "bicycle", "computer", "trade", "wholesale"}
 
 
-def exclusion_reason(tags: dict[str, str], name: str, type_key: str | None) -> str | None:
+# Brand dealers (owner, 2026-11-22: "dealers won't work out"): their web presence comes from the brand.
+DEALER_LABELS = {"Vehicle dealer", "Car dealer", "Two-wheeler dealer", "Electronics / mobiles", "Electronics store", "Mobile store"}
+DEALER_KEYS = {"shop=car", "shop=motorcycle", "shop=mobile_phone", "shop=electronics", "shop=tyres"}
+LOCATOR_SITE = re.compile(r"locator\.|store-?locator|/locator/|dealer-?locator|branch-?locator|/stores?/|stores\.[a-z0-9-]+\.(com|in)|"
+                          r"outlets?\.[a-z0-9-]+\.(com|in)|branches\.|zomato\.com|swiggy\.com|justdial\.com|indiamart\.com", re.I)
+
+
+# Focus lists (owner, 2026-11-22). Matched on the business type; each has its own pitch angle.
+NICHES: dict[str, dict[str, Any]] = {
+    "shops": {"label": "Shops & bazaars → own billing software", "match": r"shop|store|bazaar|mart|supermarket|grocery|provision|hardware|"
+              r"pharmac|medical store|wholesale|textile|fabric|clothing|fashion|footwear|furniture|jewel|sweet|bakery|stationery|retail",
+              "angle": "your own billing and barcode software (one-time cost, no monthly subscription, works offline), plus stock and GST reports"},
+    "real_estate": {"label": "Real estate", "match": r"real estate|estate agent|property|builder|construction|housing|apartment",
+                    "angle": "a property website with listings, a lead CRM for site visits, and WhatsApp follow-ups"},
+    "delivery": {"label": "Delivery & logistics", "match": r"courier|logistic|transport|packers|movers|delivery|cloud kitchen|caterer|"
+                 r"catering|water supply|travel agen|cab|taxi",
+                 "angle": "an order/booking website, a WhatsApp order bot, and a simple tracking dashboard"},
+    "art": {"label": "Art, craft & creative work", "match": r"art|craft|gallery|handicraft|photograph|boutique|tailor|design|tattoo|"
+            r"music|dance|pottery|frame|painting|sculpt|embroider",
+            "angle": "a portfolio website and online catalogue, Instagram shop setup, and an enquiry/order form"},
+    "partners": {"label": "Referral partners", "match": r"accountant|tax|chartered|architect|interior|event|wedding|photograph|printing|"
+                 r"advertising|consult",
+                 "angle": "a partnership: you refer clients who need websites or software and we share the fee, plus a website for you"},
+}
+
+
+def niche_of(p: "Prospect") -> str | None:
+    kind = f"{p.type_label} {(p.raw_tags or {}).get('overture:category', '')}".lower()
+    for key, n in NICHES.items():
+        if re.search(n["match"], kind):
+            return key
+    return None
+
+
+def exclusion_reason(tags: dict[str, str], name: str, type_key: str | None, label: str | None = None) -> str | None:
     """Why this place does NOT need us (or None). Shown in run logs and on old records."""
+    if (type_key in DEALER_KEYS or label in DEALER_LABELS or re.search(r"\b(motors|automobiles|honda|hero|yamaha|tvs|bajaj|suzuki|"
+            r"hyundai|maruti|toyota|mahindra|tata motors|kia|nexa|royal enfield)\b", name, re.I) and (label or "").endswith("dealer")):
+        return "dealer of a brand"
+    site = tags.get("website") or tags.get("overture:website") or ""
+    if site and LOCATOR_SITE.search(site):
+        return "branch of a bigger company (store-locator page)"
     dealer = tags.get("shop") in DEALER_SHOPS
     # A dealer's brand tag is the brand it sells, not its owner: dealers stay if they meet our criteria.
     if not dealer and (tags.get("brand") or tags.get("brand:wikidata") or tags.get("operator:wikidata") or tags.get("franchise")):
@@ -426,7 +466,7 @@ def parse_element(el: dict[str, Any]) -> ParsedProspect | None:
     if c is None:
         return None
     key, bt = c
-    if exclusion_reason(tags, name, key):
+    if exclusion_reason({**tags, "website": _first(tags, WEBSITE_KEYS) or ""}, name, key, bt.label):
         return None
     el_type, el_id = el.get("type"), el.get("id")
     if el_type not in ("node", "way", "relation") or el_id is None:
@@ -492,6 +532,8 @@ def _gap(key: str, label: str, detail: str) -> dict[str, str]:
     return {"key": key, "label": label, "detail": detail}
 
 
+# Real problems a customer notices. Missing analytics / social tags / structured data alone don't make a site "weak".
+SERIOUS_GAPS = {"unreachable", "no_https", "not_mobile", "outdated", "basic_builder", "no_title", "no_description"}
 _COLLEGE_SERVICES = ("website", "crm", "erp", "ai", "marketing")
 LOW_VALUE = re.compile(r"fast food|kiosk|tea|juice|grocery|convenience|provision|mobile|gift|stationery|xerox|photocopy|tailor|"
                        r"cobbler|laundry|bicycle|pan shop|vegetable|fruit|meat|fish|chicken|egg", re.I)
@@ -640,12 +682,14 @@ def evaluate(p: Prospect) -> None:
     if social_activity in ("very_active", "some"):
         need.insert(0, f"owner checked: {'very active' if social_activity == 'very_active' else 'some activity'} on social media")
     audit_gaps_keys = {g.get("key") for g in ((p.audit or {}).get("gaps") or [])}
+    serious = audit_gaps_keys & SERIOUS_GAPS
+    weak_site = "unreachable" in audit_gaps_keys or len(serious) >= 2 or (len(serious) == 1 and len(audit_gaps_keys - SERIOUS_GAPS) >= 4)
     if p.has_website and p.audited_at:
-        if "unreachable" in audit_gaps_keys or len(audit_gaps_keys) >= 3:
+        if weak_site:
             need.insert(0, "website is broken or weak: " + ", ".join(g["label"].lower() for g in (p.audit or {}).get("gaps", [])[:4]))
     if p.has_website and not p.audited_at:
         level = "check_site"
-    elif p.has_website and ("unreachable" in audit_gaps_keys or len(audit_gaps_keys) >= 3):
+    elif p.has_website and weak_site:
         level = "upgrade"
     elif p.has_website:
         level = "maybe"
@@ -739,6 +783,7 @@ def upsert(db: Session, pp: ParsedProspect, area: str, country: str | None) -> t
         p.audit, p.audited_at = keep, None  # website changed: old audit no longer applies (owner's social check kept)
     p.has_website = bool(pp.website)
     p.source = "overture" if pp.ref.startswith("overture:") else "openstreetmap"
+    p.new_listing = bool(pp.tags.get("overture:new")) or bool(p.new_listing)
     p.source_url, p.raw_tags = pp.url, pp.tags
     evaluate(p)
     return p, created
@@ -1045,14 +1090,11 @@ def audit_html(final_url: str, html: str, now_year: int) -> list[dict[str, str]]
     return gaps
 
 
-def audit_website(db: Session, p: Prospect, http: SafeHttp | None = None) -> Prospect:
-    if not p.website:
-        raise ValueError("Prospect has no website to check")
-    url = p.website.strip() if re.match(r"^https?://", p.website.strip(), re.I) else f"http://{p.website.strip()}"
+def fetch_audit(website: str, http: SafeHttp) -> dict[str, Any]:
+    """Network part of a website check (thread-safe given its own SafeHttp). Returns the audit dict."""
+    url = website.strip() if re.match(r"^https?://", website.strip(), re.I) else f"http://{website.strip()}"
     if re.match(r"^https?://[^/]+$", url, re.I):
         url += "/"
-    own = http is None
-    http = http or SafeHttp(rate_limit_per_minute=10)
     now = utcnow()
     try:
         res = http.get(url)
@@ -1060,15 +1102,29 @@ def audit_website(db: Session, p: Prospect, http: SafeHttp | None = None) -> Pro
             gaps = [_gap("unreachable", "Website not working", f"Homepage returned {res.content_type}, not a web page.")]
         else:
             gaps = audit_html(res.url, res.text, now.year)
-        p.audit = {"url": p.website, "final_url": res.url, "status": res.status_code, "gaps": gaps, "checked_at": now.isoformat()}
+        return {"url": website, "final_url": res.url, "status": res.status_code, "gaps": gaps, "checked_at": now.isoformat()}
     except FetchError as exc:
-        p.audit = {"url": p.website, "error": str(exc)[:300], "checked_at": now.isoformat(),
-                   "gaps": [_gap("unreachable", "Website not working", f"Could not load the site: {str(exc)[:200]}")]}
+        return {"url": website, "error": str(exc)[:300], "checked_at": now.isoformat(),
+                "gaps": [_gap("unreachable", "Website not working", f"Could not load the site: {str(exc)[:200]}")]}
+
+
+def apply_audit(p: Prospect, audit: dict[str, Any]) -> None:
+    keep = {k: v for k, v in (p.audit or {}).items() if k == "social_activity"}  # the owner's own check survives
+    p.audit = {**audit, **keep}
+    p.audited_at = utcnow()
+    evaluate(p)
+
+
+def audit_website(db: Session, p: Prospect, http: SafeHttp | None = None) -> Prospect:
+    if not p.website:
+        raise ValueError("Prospect has no website to check")
+    own = http is None
+    http = http or SafeHttp(rate_limit_per_minute=10)
+    try:
+        apply_audit(p, fetch_audit(p.website, http))
     finally:
         if own:
             http.close()
-    p.audited_at = now
-    evaluate(p)
     db.commit()
     return p
 
@@ -1087,7 +1143,7 @@ PITCH_LINES = {
     "strategy": "a clear plan to grow your business online",
     "backend": "custom software built for how you work",
     "api": "integrations with payment, delivery and other platforms",
-    "internal_apps": "an internal app or dashboard for your team",
+    "internal_apps": "your own billing / stock software or dashboard — one-time cost, no monthly subscription",
 }
 
 
@@ -1099,8 +1155,12 @@ def digits(phone: str | None) -> str | None:
 
 
 def pitch(p: Prospect) -> dict[str, Any]:
-    gaps = [g["label"].lower() for g in (p.gaps or []) if g.get("key") not in ("no_contact",)]
+    gaps = [g["label"].lower() for g in (p.gaps or []) if g.get("key") not in ("no_contact", "social_only")]
     services = [PITCH_LINES[s] for s in (p.recommended_services or []) if s in PITCH_LINES][:3]
+    niche = niche_of(p)
+    angle = NICHES[niche]["angle"] if niche else None
+    if angle and angle not in services:
+        services = [angle, *services][:3]
     noticed = (
         "I noticed your business does not have a website yet" if not p.has_website
         else f"I had a quick look at your website and noticed a few things that may be costing you customers ({', '.join(gaps[:3])})"
@@ -1114,14 +1174,30 @@ def pitch(p: Prospect) -> dict[str, Any]:
         + "\nCould I share a few ideas in a short call this week? No obligation.\n\n"
         "Thank you,\nInferago Tech Services"
     )
+    # WhatsApp first, value first: offer something free and useful, ask for nothing big.
+    if niche == "partners":
+        offer = "I'd like to explore a simple referral partnership: when your clients need a website or software, you introduce us and we share the fee."
+    elif niche == "shops":
+        offer = "I can show you a free demo of a simple billing + barcode app made for shops like yours: one-time cost, no monthly fees."
+    elif p.has_website and gaps:
+        offer = f"I checked your website for free and found {len(gaps)} quick fixes ({', '.join(gaps[:2])}). Happy to send you the list, no charge."
+    else:
+        offer = "I can make you a free sample homepage for your business so you can see how it would look. No cost, no obligation."
+    soft = f"Hi {p.name} 🙏\n\nI'm from Inferago, a small tech team in Tamil Nadu. " + (
+        f"{offer}\n\nShall I send it? Just reply yes, or no worries if not interested.")
     norm, ptype = (p.phone_normalized, p.phone_type) if p.phone_type else check_phone(p.phone, p.country)
     d = norm.lstrip("+") if norm else None
-    wa = f"https://wa.me/{d}?text={quote(body)}" if d and ptype in ("mobile", "international") else None
+    wa = f"https://wa.me/{d}?text={quote(soft)}" if d and ptype in ("mobile", "international") else None
     return {
         "subject": f"Helping {p.name} get more customers online",
         "message": body,
+        "soft_message": soft,
+        "niche": niche,
+        "niche_label": NICHES[niche]["label"] if niche else None,
         "call_script": f"Hi, is this {p.name}? I'm calling from Inferago Tech Services. {noticed}. "
-        "We help local businesses get more enquiries online. Would you be open to a 10-minute chat?",
+        + (f"We help with {angle}. " if angle else "We help local businesses get more enquiries online. ")
+        + "Would you be open to a 10-minute chat?",
+        "if_rude": "Stay polite: 'Sorry to disturb you, have a good day.' Log 'Not interested' and move on — it's not personal.",
         "links": {
             "call": f"tel:{norm}" if norm else None,
             "whatsapp": wa,

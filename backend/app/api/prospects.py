@@ -44,8 +44,29 @@ def _get(db: Session, pid: int) -> Prospect:
     return p
 
 
-def _filtered(q, segment, status, area, country, has_website, service, min_score, phone=None, need=None, state=None, quality=None):
-    stmt = select(Prospect)
+FOCUS_PATTERN = "^(new|hidden|shops|real_estate|delivery|art|partners)$"
+
+
+def _focus(stmt, focus):
+    from sqlalchemy import String as _S
+
+    from app.prospects import NICHES
+
+    if not focus:
+        return stmt
+    if focus == "new":
+        return stmt.where(Prospect.new_listing.is_(True))
+    if focus == "hidden":  # good business, no website and no social page: nobody is helping them online yet
+        return stmt.where(Prospect.quality_level.in_(("good", "established")), Prospect.has_website.is_(False),
+                          Prospect.social_links.cast(_S).in_(("[]", "null")))
+    words = [w for w in NICHES[focus]["match"].split("|") if w]
+    # type label + the category part of business_type ("shop=bakery" → "bakery", "overture=dentist" → "dentist")
+    kind = func.lower(Prospect.type_label + " " + func.substr(Prospect.business_type, func.instr(Prospect.business_type, "=") + 1))
+    return stmt.where(or_(*[kind.like(f"%{w.replace('_', ' ')}%") for w in words], *[kind.like(f"%{w}%") for w in words]))
+
+
+def _filtered(q, segment, status, area, country, has_website, service, min_score, phone=None, need=None, state=None, quality=None, focus=None):
+    stmt = _focus(select(Prospect), focus)
     if quality == "established":
         stmt = stmt.where(Prospect.quality_level == "established")
     elif quality == "good":
@@ -97,11 +118,12 @@ def list_prospects(
     need: str | None = Query(None, pattern="^(definite|likely|upgrade|check_site)$"),
     state: str | None = None,
     quality: str | None = Query(None, pattern="^(established|good)$"),
+    focus: str | None = Query(None, pattern=FOCUS_PATTERN),
     sort: str = Query("score", pattern="^(score|newest|follow_up|name)$"),
     paging: Paging = Depends(),
     db: Session = DB,
 ):
-    stmt = _filtered(q, segment, status, area, country, has_website, service, min_score, phone, need, state, quality)
+    stmt = _filtered(q, segment, status, area, country, has_website, service, min_score, phone, need, state, quality, focus)
     if sort == "follow_up":
         stmt = stmt.where(Prospect.next_follow_up.is_not(None))
     stmt = stmt.order_by(SORTS[sort], Prospect.id.desc())
@@ -118,10 +140,11 @@ def map_points(
     quality: str | None = Query(None, pattern="^(established|good)$"),
     has_website: bool | None = None, phone: str | None = Query(None, pattern="^(verified|mobile|usable)$"),
     service: str | None = None, q: str | None = None, state: str | None = None,
+    focus: str | None = Query(None, pattern=FOCUS_PATTERN),
     limit: int = Query(3000, ge=1, le=10000), db: Session = DB,
 ):
     """Compact points for the map view: the best `limit` prospects inside the visible area."""
-    stmt = _filtered(q, segment, status, None, None, has_website, service, None, phone, need, state, quality).where(
+    stmt = _filtered(q, segment, status, None, None, has_website, service, None, phone, need, state, quality, focus).where(
         Prospect.lat.between(min_lat, max_lat), Prospect.lon.between(min_lon, max_lon))
     total = db.scalar(select(func.count()).select_from(stmt.order_by(None).subquery())) or 0
     # Spread the points over the visible area: split it into a grid and take the best few per cell, so a
@@ -144,6 +167,7 @@ def next_to_call(
     need: str | None = Query(None, pattern="^(definite|likely)$"), phone: str | None = Query("usable", pattern="^(mobile|usable)$"),
     segment: str | None = Query(None, pattern="^(small_business|professional|enterprise|college)$"),
     exclude: str | None = Query(None, max_length=4000, description="comma-separated ids skipped this session"),
+    focus: str | None = Query(None, pattern=FOCUS_PATTERN),
     db: Session = DB,
 ):
     """The next prospect for the call list: due callbacks / retries first, then the best new one."""
@@ -151,7 +175,7 @@ def next_to_call(
     q_level = None if quality == "any" else quality
 
     def base():
-        stmt = _filtered(None, segment, None, None, None, None, None, None, phone, None, state, q_level)
+        stmt = _filtered(None, segment, None, None, None, None, None, None, phone, None, state, q_level, focus)
         if group == "no_website":
             stmt = stmt.where(Prospect.has_website.is_(False), Prospect.segment != "college")
             if need:
@@ -195,6 +219,8 @@ def prospects_summary(db: Session = DB):
         "by_segment": grouped(Prospect.segment),
         "definite": db.scalar(select(func.count(Prospect.id)).where(Prospect.need_level == "definite", Prospect.status.in_(OPEN_STATUSES))) or 0,
         "by_need": {k or "unknown": v for k, v in db.execute(select(Prospect.need_level, func.count()).where(Prospect.status.in_(OPEN_STATUSES)).group_by(Prospect.need_level)).all()},
+        "new_listings": db.scalar(select(func.count(Prospect.id)).where(Prospect.new_listing.is_(True), Prospect.status.in_(OPEN_STATUSES))) or 0,
+        "focus": {k: v["label"] for k, v in __import__("app.prospects", fromlist=["NICHES"]).NICHES.items()},
         "by_quality": {k or "unknown": v for k, v in db.execute(select(Prospect.quality_level, func.count()).where(Prospect.status.in_(OPEN_STATUSES)).group_by(Prospect.quality_level)).all()},
         "calls_today": _calls_today(db),
         "by_status": grouped(Prospect.status),
@@ -380,6 +406,13 @@ def overture_download(db: Session = DB, who: str = Depends(actor)):
     return run
 
 
+def _prev_ids(current: Path) -> str | None:
+    """The newest 'overture-ids-<release>.parquet' older than the scanned release (for 'newly listed')."""
+    rel = current.name.removeprefix("overture-india-").removesuffix(".parquet")
+    older = sorted(f for f in current.parent.glob("overture-ids-*.parquet") if f.name.removeprefix("overture-ids-").removesuffix(".parquet") < rel)
+    return str(older[-1]) if older else None
+
+
 @router.post("/prospects/scan-overture", response_model=ProspectRunOut, status_code=202)
 def scan_overture(body: OvertureScanIn, db: Session = DB, who: str = Depends(actor)):
     folder = map_folders()["maps"].resolve()
@@ -397,7 +430,7 @@ def scan_overture(body: OvertureScanIn, db: Session = DB, who: str = Depends(act
     log_activity(db, "prospect_run", None, "overture_scan", body.model_dump(), who)
     db.commit()
     jobs.submit_overture(run.id, "scan", path=str(path), max_keep=body.max_keep, min_confidence=body.min_confidence,
-                         cities=body.cities, radius_km=body.radius_km, rules=_rules(db), mode=body.mode)
+                         cities=body.cities, radius_km=body.radius_km, rules=_rules(db), mode=body.mode, prev_ids=_prev_ids(path))
     db.refresh(run)
     return run
 
@@ -406,9 +439,9 @@ def scan_overture(body: OvertureScanIn, db: Session = DB, who: str = Depends(act
 def export_csv(
     segment: str | None = None, status: str | None = None, area: str | None = None, has_website: bool | None = None,
     service: str | None = None, min_score: float | None = None, phone: str | None = None, need: str | None = None,
-    state: str | None = None, quality: str | None = None, db: Session = DB,
+    state: str | None = None, quality: str | None = None, focus: str | None = Query(None, pattern=FOCUS_PATTERN), db: Session = DB,
 ):
-    rows = db.scalars(_filtered(None, segment, status, area, None, has_website, service, min_score, phone, need, state, quality).order_by(Prospect.score.desc()).limit(5000)).all()
+    rows = db.scalars(_filtered(None, segment, status, area, None, has_website, service, min_score, phone, need, state, quality, focus).order_by(Prospect.score.desc()).limit(5000)).all()
     buf = io.StringIO()
     w = csv.writer(buf)
     w.writerow(["name", "type", "segment", "need", "quality", "area", "state", "country", "score", "status", "phone", "phone_checked", "phone_type", "phone_confirmed", "email", "website", "address", "gaps", "services", "source"])

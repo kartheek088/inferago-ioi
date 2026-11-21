@@ -575,6 +575,7 @@ class ProspectOut(ORM):
     social_links: list[str]
     opening_hours: str | None
     has_website: bool
+    new_listing: bool
     source: str
     source_url: str
     gaps: list[dict[str, Any]]
@@ -695,7 +696,7 @@ class OvertureScanIn(BaseModel):
     radius_km: float = Field(15.0, ge=1, le=100)
     max_keep: int = Field(200000, ge=10, le=1000000)
     min_confidence: float = Field(0.3, ge=0, le=1)
-    mode: str = Field("no_website", pattern="^(no_website|upgrade|colleges)$")
+    mode: str = Field("no_website", pattern="^(no_website|upgrade|colleges|new)$")
 
 
 class ChainOut(ORM):

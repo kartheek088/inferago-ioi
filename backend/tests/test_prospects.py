@@ -350,6 +350,10 @@ def test_need_levels():
     weak = mk(has_website=True, website="https://x.example", audited_at=__import__("datetime").datetime(2026, 11, 22),
               audit={"gaps": [{"key": "no_https", "label": "Not secure"}, {"key": "not_mobile", "label": "Not mobile"}, {"key": "no_form", "label": "No form"}]})
     assert weak.need_level == "upgrade" and "website is broken or weak" in weak.need_reasons[0]
+    fine = mk(has_website=True, website="https://y.example", audited_at=__import__("datetime").datetime(2026, 11, 22),
+              audit={"gaps": [{"key": "no_analytics", "label": "No analytics"}, {"key": "no_social_tags", "label": "x"},
+                              {"key": "no_structured_data", "label": "y"}]})
+    assert fine.need_level == "maybe"  # only minor gaps: not worth an "upgrade" pitch
 
 
 def test_need_filter_api(client, db, web, monkeypatch):
@@ -429,13 +433,46 @@ def test_project_links_and_it_skip():
     assert analyse("Infosys to set up new campus in Coimbatore", "") is None
 
 
-def test_dealers_allowed_but_chains_not():
+def test_dealers_and_locator_branches_skipped():
     from app.prospects import exclusion_reason as ex
 
-    assert ex({"shop": "car", "brand": "Maruti Suzuki"}, "Sri Vari Maruti Showroom", "shop=car") is None
-    assert ex({"shop": "motorcycle", "brand": "Honda"}, "Kovai Honda", "shop=motorcycle") is None
+    # owner, 2026-11-22: dealers don't work out
+    assert ex({"shop": "car", "brand": "Maruti Suzuki"}, "Sri Vari Maruti Showroom", "shop=car") == "dealer of a brand"
+    assert ex({}, "Kovai Honda", None, "Vehicle dealer") == "dealer of a brand"
     assert ex({"shop": "clothes", "brand": "Zudio"}, "Zudio", "shop=clothes") == "part of a chain or brand"
-    assert ex({"shop": "electronics"}, "Poorvika Mobiles", "shop=electronics") == "part of a chain or partner network"
+    assert ex({"overture:website": "https://locator.iocl.com/indane/x"}, "Indane Gas Agency", None, "Shop") \
+        == "branch of a bigger company (store-locator page)"
+    assert ex({"website": "https://srimurugansilks.example"}, "Sri Murugan Silks", "shop=fabric", "Textiles / silk store") is None
+
+
+def test_niches_and_soft_pitch(client, db):
+    from app.prospects import niche_of, pitch
+
+    def mk(name, label, btype="shop=x", **kw):
+        p = Prospect(name=name, segment="small_business", business_type=btype, type_label=label, has_website=False,
+                     phone="9843012345", country="India", social_links=[], audit={}, gaps=[], recommended_services=["website"],
+                     source_ref=f"t:{name}", source_url="https://x.example", score=80, need_level="definite", quality_level="good",
+                     score_reasons=[], contact_log=[], raw_tags={}, need_reasons=[], status="new", **kw)
+        evaluate(p)
+        db.add(p)
+        return p
+
+    shop = mk("Lakshmi Supermarket", "Grocery / supermarket", address="Main Rd")
+    ca = mk("Ravi & Co Chartered Accountants", "Accountant / tax", address="X")
+    gem = mk("Hidden Gem Clinic", "Doctor / clinic", "amenity=doctors", address="Y", email="a@b.example", opening_hours="Mo-Sa")
+    assert gem.quality_level in ("good", "established")
+    db.commit()
+    assert niche_of(shop) == "shops" and niche_of(ca) == "partners"
+    d = pitch(shop)
+    assert "billing" in d["soft_message"] and "free demo" in d["soft_message"] and d["links"]["whatsapp"].startswith("https://wa.me/91")
+    assert "referral partnership" in pitch(ca)["soft_message"]
+    assert "rude" in d["if_rude"] or "polite" in d["if_rude"].lower()
+    names = lambda f: {p["name"] for p in client.get("/api/prospects", params={"focus": f, "status": ""}).json()["items"]}  # noqa: E731
+    assert names("shops") == {"Lakshmi Supermarket"}
+    assert names("partners") == {"Ravi & Co Chartered Accountants"}
+    assert "Hidden Gem Clinic" in names("hidden")
+    nxt = client.get("/api/prospects/next", params={"group": "no_website", "focus": "shops", "quality": "any", "phone": "usable"}).json()
+    assert nxt["prospect"]["name"] == "Lakshmi Supermarket"
 
 
 def test_social_presence_makes_definite_and_owner_check(client, db, web, monkeypatch):
@@ -482,3 +519,24 @@ def test_map_points_spread(client, db):
     d = client.get("/api/prospects/map-points", params=dict(min_lat=6, min_lon=68, max_lat=36, max_lon=98, limit=10)).json()
     assert d["total"] == 51 and d["shown"] <= 10
     assert "Far" in [p[5] for p in d["points"]]
+
+
+def test_parallel_website_checks_keep_owner_rating(client, db, web):
+    from app import jobs
+
+    for i in range(3):
+        db.add(Prospect(name=f"Site {i}", segment="small_business", business_type="shop=x", type_label="Shop", has_website=True,
+                        website=f"http://site{i}.example", source_ref=f"w:{i}", source_url="https://x.example", social_links=[],
+                        audit={"social_activity": "very_active"} if i == 0 else {}, gaps=[], recommended_services=[], score_reasons=[],
+                        contact_log=[], raw_tags={}, need_reasons=[], status="new", score=50 - i))
+        web.text(f"http://site{i}.example/", "<html><head><title>Old site</title></head><body>© 2015</body></html>")
+    db.commit()
+    run = ProspectRun(areas=["Website check"], status="running", log=[])
+    db.add(run)
+    db.commit()
+    jobs._run_website_checks(run.id, 10, None, None)
+    db.expire_all()
+    run = db.get(ProspectRun, run.id)
+    assert run.status == "success" and run.found == 3 and run.new == 3, run.log
+    p0 = db.query(Prospect).filter_by(name="Site 0").one()
+    assert p0.need_level == "upgrade" and p0.audit["social_activity"] == "very_active"  # owner's check survives
