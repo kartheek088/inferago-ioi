@@ -6,7 +6,7 @@ _Last updated: 2026-11-21_
 
 | Check | Result |
 |---|---|
-| Backend tests `uv run pytest` | **161 passed** (unit, GeM connector (mocked), AI quote verification, API integration, mocked connectors, dedupe, eligibility hard gates, score arithmetic, source failures, missing evidence, relationship provenance, outreach approval, migrations, SSRF/auth, documents, AI fallback, end-to-end) |
+| Backend tests `uv run pytest` | **169 passed** (unit, GeM connector (mocked), AI quote verification, API integration, mocked connectors, dedupe, eligibility hard gates, score arithmetic, source failures, missing evidence, relationship provenance, outreach approval, migrations, SSRF/auth, documents, AI fallback, end-to-end) |
 | Alembic `upgrade head` + `alembic check` | Pass — no drift between models and migration |
 | Migration upgrade → downgrade → upgrade | Pass (test) |
 | Frontend `tsc` type check | Pass |
@@ -43,6 +43,19 @@ _Last updated: 2026-11-21_
   "Number works" is set only by a human: the confirm button, or a call/WhatsApp logged as interested, not interested or won.
   WhatsApp links are offered only for mobile numbers. Map files over 300 MB use a temporary disk index instead of RAM;
   a file still being written (modified in the last 2 minutes) cannot be scanned.
+- **Overture Maps business directory (2026-11-22).** Overture "places" is open data (CDLA-Permissive-2.0) from Meta, Microsoft,
+  Foursquare and others. It is far richer than OSM for India; one 5×5 km area of Coimbatore has 14,442 places, 6,025 of them with a
+  phone and no website, nearly all with a Facebook page. DuckDB copies India's places that have a phone from the public S3 release
+  into `data/maps/overture-india-<release>.parquet` once; scans then run locally. The same rules apply (no website — a Facebook link in
+  "websites" is not a website; a valid +91 phone, which also keeps out neighbouring countries; chains, colleges, IT and government
+  skipped; dealers kept), plus Overture confidence ≥ 0.3, not closed, and country = IN (the download box also covers neighbouring
+  countries). Businesses with social pages come first. `source_url` links to the Overture explorer at the place's location.
+  First real run (2026-11-22, release 2026-11-18.0): download 9 min (4.1M listings with a phone, 345 MB). Scan about 5 min: 1,459,604 Indian
+  listings with a phone, 1,227,636 meet the criteria, the best 200,000 kept. Extra name checks (government, colleges, IT, banks) skipped
+  3,492 that Overture categories missed. Existing prospects are re-checked at startup only when `RULES_VERSION` changes.
+- **Map view (2026-11-22).** Prospects → Map uses Leaflet with free OpenStreetMap tiles. It shows the best 3,000 in the visible area
+  with the current filters, coloured by need level; click a dot to open the prospect. `?view=map` opens it directly.
+  Points are spread over a 60×60 grid of the visible area (best few per cell), so a zoomed-out map covers the whole country.
 - **Who does NOT need us (2026-11-22).** Prospects are skipped if they are chains or partner-run (brand/franchise tags,
   OYO/Treebo and other hotel networks, food, pharmacy and retail chains, bank branches, vehicle dealers), colleges or
   universities, IT/software companies, or government bodies. Older records are auto-marked "Auto-skipped: reason".

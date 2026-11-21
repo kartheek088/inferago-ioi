@@ -19,6 +19,7 @@ dependencies = [
     "python-multipart>=0.0.9",
     "anthropic>=2.11.0",
     "osmium>=4.3.2",
+    "duckdb>=2.0.1",
 ]
 
 [dependency-groups]

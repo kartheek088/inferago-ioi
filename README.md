@@ -12,8 +12,8 @@ Discover → Collect → Deduplicate → Classify → Filter → Research select
 
 It also finds **prospects**: local businesses, independent professionals and bigger firms that have
 no website, a weak website, or could use CRM, AI or ERP/SAP, even though they have not asked.
-Go to **Prospects**, then **Find prospects**. The most reliable way is to download the free South India map file
-once (link on that screen) and click **Scan map file**.
+Go to **Prospects**, then **Find prospects**, then **Business directory (best)**. Download India's listings once (about 10 minutes),
+then click **Find prospects**. There is also a **Map** view.
 
 Not SaaS. V1 never sends email, places calls, submits bids, registers as a vendor or signs anything.
 
@@ -62,7 +62,7 @@ Researched partner programmes: `cd backend && uv run python ../scripts/seed_part
 
 ```bash
 scripts/test.sh                      # everything below
-cd backend && uv run pytest -q       # 161 backend tests, no live network
+cd backend && uv run pytest -q       # 169 backend tests, no live network
 cd frontend && npm run typecheck && npm run build
 ```
 

@@ -451,3 +451,18 @@ def test_place_names_and_more_cities():
     assert _place_name("tonk") == "Tonk" and _place_name("NEW DELHI, India") == "New Delhi" and _place_name("  ") is None
     assert nearest_city(22.72, 75.86) == ("Indore", "India")
     assert nearest_city(0.0, 0.0) == ("Other", None)
+
+
+def test_map_points_spread(client, db):
+    # 50 top-score prospects in one city and 1 elsewhere: the far one must still appear on a small limit.
+    for i in range(50):
+        db.add(Prospect(name=f"K{i}", segment="small_business", business_type="shop=x", type_label="Shop", has_website=False,
+                        lat=10.0 + i * 1e-4, lon=76.0, score=95, need_level="definite", source_ref=f"t:{i}", source_url="https://x.example",
+                        social_links=[], audit={}, gaps=[], recommended_services=[], score_reasons=[], contact_log=[], raw_tags={}, need_reasons=[]))
+    db.add(Prospect(name="Far", segment="small_business", business_type="shop=x", type_label="Shop", has_website=False,
+                    lat=28.6, lon=77.2, score=60, need_level="definite", source_ref="t:far", source_url="https://x.example",
+                    social_links=[], audit={}, gaps=[], recommended_services=[], score_reasons=[], contact_log=[], raw_tags={}, need_reasons=[]))
+    db.commit()
+    d = client.get("/api/prospects/map-points", params=dict(min_lat=6, min_lon=68, max_lat=36, max_lon=98, limit=10)).json()
+    assert d["total"] == 51 and d["shown"] <= 10
+    assert "Far" in [p[5] for p in d["points"]]

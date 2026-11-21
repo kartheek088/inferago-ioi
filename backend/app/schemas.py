@@ -655,3 +655,11 @@ class ProjectLeadOut(ORM):
 class ProjectLeadUpdate(BaseModel):
     status: str | None = Field(None, pattern="^(new|shortlisted|contacted|interested|not_interested|won|rejected)$")
     notes: str | None = Field(None, max_length=5000)
+
+
+class OvertureScanIn(BaseModel):
+    file: str = Field(min_length=5, max_length=200, pattern=r"^overture-[A-Za-z0-9._-]+\.parquet$")
+    cities: list[str] | None = Field(None, max_length=100)
+    radius_km: float = Field(15.0, ge=1, le=100)
+    max_keep: int = Field(200000, ge=10, le=1000000)
+    min_confidence: float = Field(0.3, ge=0, le=1)

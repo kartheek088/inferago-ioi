@@ -49,18 +49,28 @@ def _recover_prospect_runs(db) -> None:
     from app.models import Prospect
     from app.prospects import evaluate
 
+    from app.overture import extra_exclusion
     from app.prospects import exclusion_reason
 
-    for p in db.scalars(select(Prospect)):  # cheap; rules may have changed since last start
+    from app.prospects import RULES_VERSION
+    from app.settings_store import get_setting, set_setting
+
+    if get_setting(db, "prospect_rules_version") == RULES_VERSION:
+        db.commit()
+        return
+    for p in db.scalars(select(Prospect)):  # rules changed since last start: re-check every prospect once
         evaluate(p)
         # Apply the chain / college / IT / government rules to prospects found before those rules existed.
         why = exclusion_reason(p.raw_tags or {}, p.name, p.business_type)
+        if not why and p.source == "overture":
+            why = extra_exclusion(p.name, p.type_label, p.segment)
         if not why and p.status == "rejected" and (p.notes or "").startswith("Auto-skipped:"):
             p.status = "new"  # a rule that skipped it has since been relaxed (e.g. dealers are allowed)
             p.notes = (p.notes or "").split("\n", 1)[1] if "\n" in (p.notes or "") else None
         if why and p.status in ("new", "shortlisted"):
             p.status = "rejected"
             p.notes = f"Auto-skipped: {why}." + (f"\n{p.notes}" if p.notes else "")
+    set_setting(db, "prospect_rules_version", RULES_VERSION)
     db.commit()
 
 

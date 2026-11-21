@@ -30,6 +30,9 @@ from app.http_client import FetchError, SafeHttp
 from app.models import Prospect, ProspectRun
 from app.profile import SERVICE_KEYS
 
+# Bump when scoring / exclusion rules change: existing prospects are then re-checked once at startup.
+RULES_VERSION = "2026-11-22.3"
+
 OVERPASS_ENDPOINTS = [
     "https://overpass.private.coffee/api/interpreter",
     "https://overpass.kumi.systems/api/interpreter",
@@ -675,7 +678,8 @@ def upsert(db: Session, pp: ParsedProspect, area: str, country: str | None) -> t
         keep = {k: v for k, v in (p.audit or {}).items() if k == "social_activity"}
         p.audit, p.audited_at = keep, None  # website changed: old audit no longer applies (owner's social check kept)
     p.has_website = bool(pp.website)
-    p.source, p.source_url, p.raw_tags = "openstreetmap", pp.url, pp.tags
+    p.source = "overture" if pp.ref.startswith("overture:") else "openstreetmap"
+    p.source_url, p.raw_tags = pp.url, pp.tags
     evaluate(p)
     return p, created
 

@@ -56,6 +56,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "prospect_only_no_website": True,
     "prospect_require_phone": True,
     "big_projects_last_run": None,
+    "prospect_rules_version": None,
 }
 
 

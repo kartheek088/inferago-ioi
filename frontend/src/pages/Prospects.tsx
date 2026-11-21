@@ -1,6 +1,8 @@
-import { useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { api } from "../api";
 import { Empty, ErrorBox, ExtLink, Loading, Msg, Pager, fmtDate, useAction, useApi } from "../components/ui";
+
+const ProspectMap = lazy(() => import("../components/ProspectMap"));
 
 export interface Gap { key: string; label: string; detail: string }
 export interface Prospect {
@@ -115,13 +117,13 @@ function RunStatus({ runs, running, last }: ReturnType<typeof useRuns>) {
   const act = useAction();
   if (!last) return null;
   const done = last.log.filter((l) => /^[✓✗]/.test(l)).length;
-  const isFile = last.areas.length === 1 && last.areas[0].startsWith("map file");
+  const isFile = last.areas.length === 1 && (last.areas[0].startsWith("map file") || last.areas[0].startsWith("Overture"));
   return (
     <>
       {running ? (
         <div className="progress-box">
           <div className="row between small">
-            <strong>{isFile ? "Scanning the map file…" : `Searching ${last.areas.length} place(s)…`}</strong>
+            <strong>{isFile ? `${last.areas[0]}…` : `Searching ${last.areas.length} place(s)…`}</strong>
             <span className="row gap-s">
               {!isFile && <span className="muted">{done} of {last.areas.length} done · {last.found} found so far</span>}
               <button className="btn sm danger" disabled={act.busy || last.status === "stopping"}
@@ -228,6 +230,80 @@ function MapFilePanel({ status, onStarted }: { status: ReturnType<typeof useRuns
   );
 }
 
+interface OvertureStatus { files: { file: string; size_mb: number; modified: string }[]; downloading: boolean; folder: string; about: string }
+
+function OverturePanel({ status, onStarted }: { status: ReturnType<typeof useRuns>; onStarted: () => void }) {
+  const ov = useApi(() => api.get<OvertureStatus>("/prospects/overture"), [status.running]);
+  const areas = useApi(() => api.get<Areas>("/prospects/areas"));
+  const [where, setWhere] = useState<"india" | "cities">("india");
+  const [cities, setCities] = useState<string[]>(["Chennai", "Coimbatore", "Madurai"]);
+  const [radius, setRadius] = useState(15);
+  const [maxKeep, setMaxKeep] = useState(200000);
+  const act = useAction();
+  const file = ov.data?.files[ov.data.files.length - 1];
+  const download = async () => {
+    const r = await act.run(() => api.post<Run>("/prospects/overture/download"), "Download started. It takes 10–40 minutes; you can keep working.");
+    if (r) { status.runs.reload(); onStarted(); }
+  };
+  const scan = async () => {
+    if (!file) return;
+    const r = await act.run(() => api.post<Run>("/prospects/scan-overture", {
+      file: file.file, cities: where === "cities" ? cities : null, radius_km: radius, max_keep: maxKeep,
+    }), "Scan started.");
+    if (r) { status.runs.reload(); onStarted(); }
+  };
+  if (ov.error) return <ErrorBox error={ov.error} />;
+  if (!ov.data) return <Loading />;
+  return (
+    <div className="find-panel">
+      <p className="muted small">
+        The biggest free business directory: millions of Indian shops, clinics, salons, dealers and offices, most with a phone number and a Facebook page.
+        Open data from Overture Maps (Meta, Microsoft, Foursquare and others).
+      </p>
+      <ol className="steps-list small">
+        <li>
+          <strong>Get India’s business listings</strong> (once a month is enough)
+          <div className="row gap" style={{ marginTop: 6 }}>
+            {file ? <span className="badge good">✓ {file.file} · {file.size_mb} MB · {fmtDate(file.modified)}</span> : <span className="muted">Not downloaded yet.</span>}
+            {ov.data.downloading
+              ? <span className="badge warn">⏳ downloading…</span>
+              : <button className="btn sm" disabled={act.busy || status.running} onClick={download}>{file ? "Get the latest" : "Download India listings"}</button>}
+          </div>
+        </li>
+        <li>
+          <strong>Where to look</strong>
+          <div className="chips" style={{ marginTop: 6 }}>
+            <button className={`chip ${where === "india" ? "on" : ""}`} onClick={() => setWhere("india")}>All of India</button>
+            <button className={`chip ${where === "cities" ? "on" : ""}`} onClick={() => setWhere("cities")}>Around chosen cities</button>
+          </div>
+          {where === "cities" && areas.data && (
+            <div style={{ marginTop: 8 }}>
+              <div className="chips">
+                {[...(areas.data.groups["Tamil Nadu"] ?? []), ...(areas.data.groups["Rest of India"] ?? [])].map((a) => (
+                  <button key={a} className={`chip ${cities.includes(a) ? "on" : ""}`} onClick={() => setCities((c) => (c.includes(a) ? c.filter((x) => x !== a) : [...c, a]))}>{a}</button>
+                ))}
+              </div>
+              <label className="field" style={{ marginTop: 8, maxWidth: 220 }}>Distance from each city (km)
+                <input type="number" min={1} max={100} value={radius} onChange={(e) => setRadius(Number(e.target.value) || 15)} />
+              </label>
+            </div>
+          )}
+          <label className="field" style={{ marginTop: 8, maxWidth: 260 }}>Keep the best (max prospects)
+            <input type="number" min={10} max={1000000} value={maxKeep} onChange={(e) => setMaxKeep(Number(e.target.value) || 200000)} />
+          </label>
+        </li>
+      </ol>
+      <div className="row gap">
+        <button className="btn primary" disabled={act.busy || status.running || !file || (where === "cities" && !cities.length)} onClick={scan}>
+          {status.running ? "Working…" : "Find prospects"}
+        </button>
+        <span className="muted small">Runs on this laptop. Businesses with a Facebook / Instagram page but no website come first.</span>
+      </div>
+      <Msg msg={act.msg} />
+    </div>
+  );
+}
+
 function LivePanel({ status, onStarted }: { status: ReturnType<typeof useRuns>; onStarted: () => void }) {
   const { data, error } = useApi(() => api.get<Areas>("/prospects/areas"));
   const [picked, setPicked] = useState<string[]>([]);
@@ -278,15 +354,17 @@ function LivePanel({ status, onStarted }: { status: ReturnType<typeof useRuns>; 
 
 function FindPanel({ onStarted }: { onStarted: () => void }) {
   const status = useRuns(onStarted);
-  const [mode, setMode] = useState<"file" | "live">("file");
+  const [mode, setMode] = useState<"overture" | "file" | "live">("overture");
   return (
     <div className="find-panel">
       <div className="alert info small">New searches keep only businesses <strong>without a website</strong> that list a <strong>valid phone number</strong>. Chains and partner-run places (OYO, franchises, bank branches), colleges, IT companies and government offices are skipped. Independent dealers are kept.</div>
       <div className="seg-tabs">
-        <button className={`seg ${mode === "file" ? "on" : ""}`} onClick={() => setMode("file")}>From map file (recommended)</button>
+        <button className={`seg ${mode === "overture" ? "on" : ""}`} onClick={() => setMode("overture")}>Business directory (best)</button>
+        <button className={`seg ${mode === "file" ? "on" : ""}`} onClick={() => setMode("file")}>OpenStreetMap file</button>
         <button className={`seg ${mode === "live" ? "on" : ""}`} onClick={() => setMode("live")}>Live map servers</button>
       </div>
-      {mode === "file" ? <MapFilePanel status={status} onStarted={onStarted} /> : <LivePanel status={status} onStarted={onStarted} />}
+      {mode === "overture" ? <OverturePanel status={status} onStarted={onStarted} />
+        : mode === "file" ? <MapFilePanel status={status} onStarted={onStarted} /> : <LivePanel status={status} onStarted={onStarted} />}
       <RunStatus {...status} />
     </div>
   );
@@ -488,6 +566,7 @@ export default function Prospects() {
   const [q, setQ] = useState("");
   const [offset, setOffset] = useState(0);
   const [showFind, setShowFind] = useState(false);
+  const [view, setView] = useState<"list" | "map">(() => (new URLSearchParams(window.location.search).get("view") === "map" ? "map" : "list"));
   const [open, setOpen] = useState<Prospect | null>(null);
   const summary = useApi(() => api.get<Summary & { by_area: Record<string, number> }>("/prospects/summary"));
   const list = useApi(
@@ -555,6 +634,19 @@ export default function Prospects() {
         </select>
         <label className="check"><input type="checkbox" checked={noSite} onChange={(e) => setNoSite(e.target.checked)} /> No website only</label>
       </div>
+      <div className="seg-tabs">
+        <button className={`seg ${view === "list" ? "on" : ""}`} onClick={() => setView("list")}>☰ List</button>
+        <button className={`seg ${view === "map" ? "on" : ""}`} onClick={() => setView("map")}>🗺️ Map</button>
+      </div>
+      {view === "map" && (
+        <Suspense fallback={<Loading />}>
+          <ProspectMap
+            filters={{ segment, status, q, service, phone, need, has_website: noSite ? false : undefined }}
+            onOpen={async (id) => { try { setOpen(await api.get<Prospect>(`/prospects/${id}`)); } catch { /* ignore */ } }}
+          />
+        </Suspense>
+      )}
+      {view === "list" && <>
       <ErrorBox error={list.error} onRetry={list.reload} />
       {list.loading && !list.data && <Loading />}
       {list.data && list.data.items.length === 0 && (
@@ -566,6 +658,7 @@ export default function Prospects() {
         {list.data?.items.map((p) => <ProspectCard key={p.id} p={p} onOpen={() => setOpen(p)} />)}
       </div>
       {list.data && <Pager total={list.data.total} limit={list.data.limit} offset={list.data.offset} onChange={setOffset} />}
+      </>}
       {open && (
         <ProspectDrawer
           p={open}

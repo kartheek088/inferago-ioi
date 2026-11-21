@@ -139,6 +139,42 @@ def submit_map_scan(run_id: int, path: str, **kwargs) -> None:
     executor().submit(_run_map_scan, run_id, path, kwargs)
 
 
+def _run_overture(run_id: int, action: str, kwargs: dict) -> None:
+    from pathlib import Path
+
+    from app import overture
+    from app.db import utcnow
+    from app.http_client import SafeHttp
+    from app.models import ProspectRun
+
+    with SessionLocal() as db:
+        run = db.get(ProspectRun, run_id)
+        if not run:
+            return
+        if action == "scan":
+            overture.run_overture_scan(db, run, **kwargs)
+            return
+        try:  # download
+            http = SafeHttp()
+            release = overture.latest_release(http)
+            http.close()
+            out = Path(kwargs["folder"]) / f"overture-india-{release}.parquet"
+            run.log = [f"Downloading India business listings (release {release}). This takes 10–40 minutes…"]
+            db.commit()
+            n = overture.download_country(release, out)
+            run.log = [*run.log, f"✓ Downloaded {n:,} listings with a phone number to {out.name}."]
+            run.status, run.found = "success", 0
+        except Exception as exc:  # noqa: BLE001
+            log.exception("Overture download failed")
+            run.log, run.status = [*(run.log or []), f"✗ Download failed: {str(exc)[:300]}"], "failed"
+        run.finished_at = utcnow()
+        db.commit()
+
+
+def submit_overture(run_id: int, action: str, **kwargs) -> None:
+    executor().submit(_run_overture, run_id, action, kwargs)
+
+
 def _run_research() -> None:
     from app.research import run_research_batch
 

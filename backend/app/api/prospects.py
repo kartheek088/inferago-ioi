@@ -7,7 +7,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
-from sqlalchemy import func, or_, select
+from sqlalchemy import Integer, func, or_, select
 from sqlalchemy.orm import Session
 
 from app import jobs
@@ -17,7 +17,7 @@ from app.db import utcnow
 from app.models import Prospect, ProspectRun
 from app.profile import SERVICE_KEYS
 from app.prospects import AREA_GROUPS, AREAS, REGIONS, SearchRules, audit_website, evaluate, pitch, record_contact, resolve_area
-from app.schemas import MapScanIn, Page, ProspectContactIn, ProspectOut, ProspectRunOut, ProspectSearchIn, ProspectUpdate
+from app.schemas import MapScanIn, OvertureScanIn, Page, ProspectContactIn, ProspectOut, ProspectRunOut, ProspectSearchIn, ProspectUpdate
 from app.settings_store import get_setting, log_activity
 
 router = APIRouter(tags=["prospects"])
@@ -97,6 +97,33 @@ def list_prospects(
     stmt = stmt.order_by(SORTS[sort], Prospect.id.desc())
     items, total = paginate(db, stmt, paging)
     return Page(items=items, total=total, limit=paging.limit, offset=paging.offset)
+
+
+@router.get("/prospects/map-points")
+def map_points(
+    min_lat: float = Query(..., ge=-90, le=90), min_lon: float = Query(..., ge=-180, le=180),
+    max_lat: float = Query(..., ge=-90, le=90), max_lon: float = Query(..., ge=-180, le=180),
+    segment: str | None = Query(None, pattern="^(small_business|professional|enterprise)$"),
+    status: str | None = None, need: str | None = Query(None, pattern="^(definite|likely)$"),
+    has_website: bool | None = None, phone: str | None = Query(None, pattern="^(verified|mobile|usable)$"),
+    service: str | None = None, q: str | None = None,
+    limit: int = Query(3000, ge=1, le=10000), db: Session = DB,
+):
+    """Compact points for the map view: the best `limit` prospects inside the visible area."""
+    stmt = _filtered(q, segment, status, None, None, has_website, service, None, phone, need).where(
+        Prospect.lat.between(min_lat, max_lat), Prospect.lon.between(min_lon, max_lon))
+    total = db.scalar(select(func.count()).select_from(stmt.order_by(None).subquery())) or 0
+    # Spread the points over the visible area: split it into a grid and take the best few per cell, so a
+    # zoomed-out map shows the whole country instead of one region full of equal top scores.
+    cell = max(max_lat - min_lat, max_lon - min_lon) / 60 or 1e-6
+    per_cell = max(1, limit // 900)
+    cell_key = func.cast(Prospect.lat / cell, Integer) * 100000 + func.cast(Prospect.lon / cell, Integer)
+    ranked = stmt.with_only_columns(
+        Prospect.id, Prospect.lat, Prospect.lon, Prospect.score, Prospect.need_level, Prospect.name,
+        func.row_number().over(partition_by=cell_key, order_by=(Prospect.score.desc(), Prospect.id)).label("rn"),
+    ).order_by(None).subquery()
+    rows = db.execute(select(ranked).where(ranked.c.rn <= per_cell).order_by(ranked.c.rn, ranked.c.score.desc()).limit(limit)).all()
+    return {"total": total, "shown": len(rows), "points": [[r.id, round(r.lat, 5), round(r.lon, 5), r.score, r.need_level, r.name] for r in rows]}
 
 
 @router.get("/prospects/summary")
@@ -227,6 +254,61 @@ def scan_map_file(body: MapScanIn, db: Session = DB, who: str = Depends(actor)):
     db.commit()
     jobs.submit_map_scan(run.id, str(path), region=body.region, max_keep=body.max_keep, cities=body.cities, radius_km=body.radius_km,
                          rules=_rules(db))
+    db.refresh(run)
+    return run
+
+
+def _busy(db: Session) -> None:
+    if db.scalar(select(ProspectRun).where(ProspectRun.status.in_(("running", "stopping")))):
+        raise HTTPException(409, "A prospect search is already running")
+
+
+@router.get("/prospects/overture")
+def overture_status():
+    folder = map_folders()["maps"]
+    files = []
+    if folder.is_dir():
+        for f in sorted(folder.glob("overture-*.parquet")):
+            st = f.stat()
+            files.append({"file": f.name, "size_mb": round(st.st_size / 1e6, 1),
+                          "modified": datetime.fromtimestamp(st.st_mtime, UTC).replace(tzinfo=None).isoformat()})
+    downloading = folder.is_dir() and any(folder.glob("overture-*.part"))
+    return {"files": files, "downloading": downloading, "folder": str(folder),
+            "about": "Overture Maps places: open data (CDLA-Permissive-2.0) from Meta, Microsoft, Foursquare and others."}
+
+
+@router.post("/prospects/overture/download", response_model=ProspectRunOut, status_code=202)
+def overture_download(db: Session = DB, who: str = Depends(actor)):
+    _busy(db)
+    folder = map_folders()["maps"]
+    folder.mkdir(parents=True, exist_ok=True)
+    run = ProspectRun(areas=["Overture: download India"], status="running", log=[])
+    db.add(run)
+    log_activity(db, "prospect_run", None, "overture_download", {}, who)
+    db.commit()
+    jobs.submit_overture(run.id, "download", folder=str(folder))
+    db.refresh(run)
+    return run
+
+
+@router.post("/prospects/scan-overture", response_model=ProspectRunOut, status_code=202)
+def scan_overture(body: OvertureScanIn, db: Session = DB, who: str = Depends(actor)):
+    folder = map_folders()["maps"].resolve()
+    path = (folder / body.file).resolve()
+    if path.parent != folder or not path.is_file():
+        raise HTTPException(404, "Overture file not found. Download it first.")
+    for c in body.cities or []:
+        try:
+            resolve_area(c)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+    _busy(db)
+    run = ProspectRun(areas=[f"Overture: {body.file}"], status="running", log=[])
+    db.add(run)
+    log_activity(db, "prospect_run", None, "overture_scan", body.model_dump(), who)
+    db.commit()
+    jobs.submit_overture(run.id, "scan", path=str(path), max_keep=body.max_keep, min_confidence=body.min_confidence,
+                         cities=body.cities, radius_km=body.radius_km, rules=_rules(db))
     db.refresh(run)
     return run
 
