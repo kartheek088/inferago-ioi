@@ -34,7 +34,9 @@ _Last updated: 2026-11-21_
   (Geofabrik's robots.txt blocks bots from .pbf files, so IOI never downloads it itself). IOI scans it locally with pyosmium:
   all of Tamil Nadu, around chosen cities, or the whole file. It keeps the best N and assigns each prospect to the nearest
   listed city within 40 km. Files are read only from `backend/data/maps/` or `~/Downloads/`, never from an arbitrary path.
-  Tested with generated map files; not yet timed on the real ~1 GB South India file.
+  First real run (2026-11-22, all-India file, 1.7 GB): 77 seconds. 18,646 prospects kept (11,100 "definite"); skipped
+  11,158 with a website and 1,545 without a usable phone. The area list now has 101 cities (63 outside Tamil Nadu in India).
+  Places more than 40 km from a listed city use the listing's own town tag; 2,114 had none and are labelled "Other".
 - **No-website + phone rules (2026-11-22).** New searches (live or map file) keep only businesses without a website
   that list a usable phone number (settings `prospect_only_no_website`, `prospect_require_phone`). Existing prospects
   are kept. Phones get a format check: Indian mobile, landline or toll-free, normalised to +91, or "looks wrong".

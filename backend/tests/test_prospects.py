@@ -443,3 +443,11 @@ def test_social_presence_makes_definite_and_owner_check(client, db, web, monkeyp
     r = client.post(f"/api/prospects/{mess['id']}/social-activity", params={"activity": "very_active"}).json()
     assert r["audit"]["social_activity"] == "very_active" and r["score"] > mess["score"]
     assert client.post(f"/api/prospects/{mess['id']}/social-activity").json()["audit"].get("social_activity") is None
+
+
+def test_place_names_and_more_cities():
+    from app.prospects import _place_name, nearest_city
+
+    assert _place_name("tonk") == "Tonk" and _place_name("NEW DELHI, India") == "New Delhi" and _place_name("  ") is None
+    assert nearest_city(22.72, 75.86) == ("Indore", "India")
+    assert nearest_city(0.0, 0.0) == ("Other", None)

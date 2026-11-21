@@ -71,6 +71,57 @@ AREAS: dict[str, tuple[float, float, str, str]] = {
     "Mysuru": (12.2958, 76.6394, "India", "Karnataka"),
     "Visakhapatnam": (17.6868, 83.2185, "India", "Andhra Pradesh"),
     "Jaipur": (26.9124, 75.7873, "India", "Rajasthan"),
+    "Indore": (22.7196, 75.8577, "India", "Madhya Pradesh"),
+    "Bhopal": (23.2599, 77.4126, "India", "Madhya Pradesh"),
+    "Gwalior": (26.2183, 78.1828, "India", "Madhya Pradesh"),
+    "Jabalpur": (23.1815, 79.9864, "India", "Madhya Pradesh"),
+    "Lucknow": (26.8467, 80.9462, "India", "Uttar Pradesh"),
+    "Kanpur": (26.4499, 80.3319, "India", "Uttar Pradesh"),
+    "Agra": (27.1767, 78.0081, "India", "Uttar Pradesh"),
+    "Varanasi": (25.3176, 82.9739, "India", "Uttar Pradesh"),
+    "Meerut": (28.9845, 77.7064, "India", "Uttar Pradesh"),
+    "Prayagraj": (25.4358, 81.8463, "India", "Uttar Pradesh"),
+    "Noida": (28.5355, 77.391, "India", "Uttar Pradesh"),
+    "Gurugram": (28.4595, 77.0266, "India", "Haryana"),
+    "Faridabad": (28.4089, 77.3178, "India", "Haryana"),
+    "Chandigarh": (30.7333, 76.7794, "India", "Chandigarh"),
+    "Ludhiana": (30.901, 75.8573, "India", "Punjab"),
+    "Amritsar": (31.634, 74.8723, "India", "Punjab"),
+    "Dehradun": (30.3165, 78.0322, "India", "Uttarakhand"),
+    "Shimla": (31.1048, 77.1734, "India", "Himachal Pradesh"),
+    "Jammu": (32.7266, 74.857, "India", "Jammu and Kashmir"),
+    "Srinagar": (34.0837, 74.7973, "India", "Jammu and Kashmir"),
+    "Jodhpur": (26.2389, 73.0243, "India", "Rajasthan"),
+    "Udaipur": (24.5854, 73.7125, "India", "Rajasthan"),
+    "Kota": (25.2138, 75.8648, "India", "Rajasthan"),
+    "Surat": (21.1702, 72.8311, "India", "Gujarat"),
+    "Vadodara": (22.3072, 73.1812, "India", "Gujarat"),
+    "Rajkot": (22.3039, 70.8022, "India", "Gujarat"),
+    "Nagpur": (21.1458, 79.0882, "India", "Maharashtra"),
+    "Nashik": (19.9975, 73.7898, "India", "Maharashtra"),
+    "Aurangabad": (19.8762, 75.3433, "India", "Maharashtra"),
+    "Kolhapur": (16.705, 74.2433, "India", "Maharashtra"),
+    "Panaji": (15.4909, 73.8278, "India", "Goa"),
+    "Mangaluru": (12.9141, 74.856, "India", "Karnataka"),
+    "Hubballi": (15.3647, 75.124, "India", "Karnataka"),
+    "Belagavi": (15.8497, 74.4977, "India", "Karnataka"),
+    "Vijayawada": (16.5062, 80.648, "India", "Andhra Pradesh"),
+    "Guntur": (16.3067, 80.4365, "India", "Andhra Pradesh"),
+    "Tirupati": (13.6288, 79.4192, "India", "Andhra Pradesh"),
+    "Warangal": (17.9689, 79.5941, "India", "Telangana"),
+    "Kozhikode": (11.2588, 75.7804, "India", "Kerala"),
+    "Thrissur": (10.5276, 76.2144, "India", "Kerala"),
+    "Kollam": (8.8932, 76.6141, "India", "Kerala"),
+    "Patna": (25.5941, 85.1376, "India", "Bihar"),
+    "Ranchi": (23.3441, 85.3096, "India", "Jharkhand"),
+    "Raipur": (21.2514, 81.6296, "India", "Chhattisgarh"),
+    "Bhubaneswar": (20.2961, 85.8245, "India", "Odisha"),
+    "Cuttack": (20.4625, 85.883, "India", "Odisha"),
+    "Guwahati": (26.1445, 91.7362, "India", "Assam"),
+    "Siliguri": (26.7271, 88.3953, "India", "West Bengal"),
+    "Durgapur": (23.5204, 87.3119, "India", "West Bengal"),
+    "Shillong": (25.5788, 91.8933, "India", "Meghalaya"),
+    "Imphal": (24.817, 93.9368, "India", "Manipur"),
     # International
     "Dubai": (25.2048, 55.2708, "United Arab Emirates", "Dubai"),
     "Abu Dhabi": (24.4539, 54.3773, "United Arab Emirates", "Abu Dhabi"),
@@ -757,6 +808,14 @@ def _km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     return 6371.0 * 2 * asin(sqrt(a))
 
 
+def _place_name(raw: str | None) -> str | None:
+    """Tidy a town name from the listing: 'tonk' -> 'Tonk'. Never invents one."""
+    if not raw or not raw.strip():
+        return None
+    v = re.split(r"[,;]", raw.strip())[0].strip()[:100]
+    return v.title() if v.islower() or v.isupper() else v
+
+
 def nearest_city(lat: float | None, lon: float | None) -> tuple[str, str | None]:
     """Nearest listed city within NEAREST_CITY_KM → (area, country). Otherwise ("Other", None)."""
     if lat is None or lon is None:
@@ -859,7 +918,7 @@ def run_map_file_scan(db: Session, run: ProspectRun, path: str, *, region: str, 
         for i, pp in enumerate(keep, 1):
             area, country = nearest_city(pp.lat, pp.lon)
             if area == "Other":  # far from listed cities: use the listing's own city/district tag if it has one
-                area = (pp.tags.get("addr:city") or pp.tags.get("addr:district") or "Other").strip()[:100]
+                area = _place_name(pp.tags.get("addr:city") or pp.tags.get("addr:district")) or "Other"
             _, created = upsert(db, pp, area, country)
             run.new += int(created)
             run.updated += int(not created)
