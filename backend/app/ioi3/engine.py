@@ -15,7 +15,9 @@ import threading
 from collections.abc import Callable
 from typing import Any
 
-from sqlalchemy import select
+from datetime import timedelta
+
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app.db import SessionLocal, utcnow
@@ -343,7 +345,11 @@ class Runner:
         pool = list(self.db.scalars(select(Company).where(
             Company.campaign_id == campaign.id, Company.archived.is_(False), Company.website.is_not(None),
             Company.research_level.in_(want), Company.qualification != "P3",
-            Company.review_status.in_(("new", "shortlisted", "watchlist"))).order_by(Company.prescore.desc(), Company.id)))
+            Company.review_status.in_(("new", "shortlisted", "watchlist")),
+            # A website that failed recently isn't retried automatically for a week ("Research further" still can).
+            or_(Company.research_error.is_(None), Company.researched_at.is_(None),
+                Company.researched_at < utcnow() - timedelta(days=7)))
+            .order_by(Company.prescore.desc(), Company.id)))
         # Respect the campaign's industry mix (e.g. 70/30) in research effort too; fill any unused share.
         mix = campaign.industry_mix or core.DEFAULT_MIX
         total = sum(mix.values()) or 1

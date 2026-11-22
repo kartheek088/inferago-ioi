@@ -431,3 +431,15 @@ def test_research_effort_follows_industry_mix(db, camp, overture, monkeypatch):
     engine.start_job(db, camp, mode="balanced", overrides={"max_candidates": 20, "max_deep": 10})
     engine.run_next(lambda: SafeHttp())
     assert seen.count(EQUIPMENT) == 7 and seen.count(WHOLESALE) == 3
+
+
+def test_failed_websites_are_not_retried_automatically(db, camp, web, overture):
+    web.error("https://velbio.example/", 403)
+    engine.start_job(db, camp, mode="balanced")
+    engine.run_next(lambda: SafeHttp())
+    calls_after_first = len([u for u in web.calls if "velbio.example/" in u and "robots" not in u])
+    assert calls_after_first == 1
+    db.rollback()
+    engine.start_job(db, camp, mode="balanced")
+    engine.run_next(lambda: SafeHttp())
+    assert len([u for u in web.calls if "velbio.example/" in u and "robots" not in u]) == calls_after_first
