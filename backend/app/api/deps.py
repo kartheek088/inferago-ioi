@@ -79,3 +79,16 @@ def paginate(db: Session, stmt: Select, paging: Paging) -> tuple[list, int]:
 
 
 DB = Depends(get_db)
+
+
+def require_nationwide_scope() -> None:
+    """Refuse all-India / worldwide discovery while the owner's Chennai-only scope is active."""
+    if get_settings().chennai_only:
+        raise HTTPException(
+            status_code=409,
+            detail="This older discovery tool is turned off: IOI 3.0 runs in Chennai-only mode (IOI_DISCOVERY_SCOPE=chennai). "
+                   "Use Discover instead.",
+        )
+
+
+NATIONWIDE = [Depends(require_nationwide_scope)]

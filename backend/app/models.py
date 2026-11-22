@@ -576,3 +576,234 @@ class ActionItem(Base):
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+
+class Prospect(TimestampMixin, Base):
+    """A business or independent professional that MAY need Inferago's services.
+
+    Found from open data (OpenStreetMap) — they did not ask for anything. Every fact comes from
+    the source record (`source_url`) or from a recorded website audit; nothing is guessed.
+    """
+
+    __tablename__ = "prospects"
+    __table_args__ = (UniqueConstraint("source_ref", name="uq_prospect_source_ref"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(300))
+    segment: Mapped[str] = mapped_column(String(40), index=True)  # small_business | professional | enterprise
+    business_type: Mapped[str] = mapped_column(String(80), index=True)  # e.g. "dentist"
+    type_label: Mapped[str] = mapped_column(String(120))
+    area: Mapped[str | None] = mapped_column(String(100), index=True)  # search area it was found in
+    state: Mapped[str | None] = mapped_column(String(60), index=True)  # from the listing's region or a listed city within 40 km
+    country: Mapped[str | None] = mapped_column(String(100), index=True)
+    address: Mapped[str | None] = mapped_column(Text)
+    lat: Mapped[float | None] = mapped_column(Float)
+    lon: Mapped[float | None] = mapped_column(Float)
+    phone: Mapped[str | None] = mapped_column(String(200))  # exactly as published
+    phone_normalized: Mapped[str | None] = mapped_column(String(30))  # e.g. +919843012345
+    phone_type: Mapped[str | None] = mapped_column(String(20), index=True)  # mobile|landline|toll_free|international|invalid
+    phone_verified: Mapped[bool] = mapped_column(Boolean, default=False)  # confirmed by a human (call/WhatsApp)
+    phone_verified_at: Mapped[datetime | None] = mapped_column(DateTime)
+    email: Mapped[str | None] = mapped_column(String(300))
+    website: Mapped[str | None] = mapped_column(String(2048))
+    social_links: Mapped[list[str]] = mapped_column(JSON, default=list)
+    opening_hours: Mapped[str | None] = mapped_column(String(300))
+    has_website: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    new_listing: Mapped[bool] = mapped_column(Boolean, default=False, index=True)  # not in the previous directory release
+    source: Mapped[str] = mapped_column(String(40), default="openstreetmap")
+    source_ref: Mapped[str] = mapped_column(String(100))  # e.g. "osm:node/123"
+    source_url: Mapped[str] = mapped_column(String(2048))
+    raw_tags: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    gaps: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)  # [{key,label,detail}]
+    recommended_services: Mapped[list[str]] = mapped_column(JSON, default=list)
+    audit: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    audited_at: Mapped[datetime | None] = mapped_column(DateTime)
+    score: Mapped[float] = mapped_column(Float, default=0.0, index=True)
+    score_reasons: Mapped[list[str]] = mapped_column(JSON, default=list)
+    need_level: Mapped[str | None] = mapped_column(String(20), index=True)  # definite | likely | upgrade | check_site | maybe
+    need_reasons: Mapped[list[str]] = mapped_column(JSON, default=list)
+    quality_level: Mapped[str | None] = mapped_column(String(20), index=True)  # established | good | small
+    quality_reasons: Mapped[list[str]] = mapped_column(JSON, default=list)
+    qualification: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)  # needs, budget, decision_maker, timeline (from calls)
+    status: Mapped[str] = mapped_column(String(30), default="new", index=True)
+    notes: Mapped[str | None] = mapped_column(Text)
+    last_contacted_at: Mapped[datetime | None] = mapped_column(DateTime)
+    next_follow_up: Mapped[datetime | None] = mapped_column(DateTime, index=True)
+    contact_log: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+
+
+class ProspectRun(Base):
+    __tablename__ = "prospect_runs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    areas: Mapped[list[str]] = mapped_column(JSON, default=list)
+    status: Mapped[str] = mapped_column(String(20), default="running", index=True)
+    found: Mapped[int] = mapped_column(Integer, default=0)
+    new: Mapped[int] = mapped_column(Integer, default=0)
+    updated: Mapped[int] = mapped_column(Integer, default=0)
+    skipped: Mapped[int] = mapped_column(Integer, default=0)
+    log: Mapped[list[str]] = mapped_column(JSON, default=list)
+    started_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+
+class ProjectLead(TimestampMixin, Base):
+    """A big project announced in public news (contract won, new plant, expansion, investment).
+
+    The company running it may need outside help (software, websites, CRM, automation), so
+    the owner can approach them as a vendor. Every lead links to the article it came from;
+    the company name is read from the headline and must be checked by the owner.
+    """
+
+    __tablename__ = "project_leads"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    url: Mapped[str] = mapped_column(String(2048), unique=True)
+    title: Mapped[str] = mapped_column(String(500))
+    summary: Mapped[str | None] = mapped_column(Text)
+    feed: Mapped[str] = mapped_column(String(200))
+    published_at: Mapped[datetime | None] = mapped_column(DateTime, index=True)
+    company: Mapped[str | None] = mapped_column(String(300))  # from the headline; owner should verify
+    project_type: Mapped[str] = mapped_column(String(30), index=True)  # contract_won | new_facility | investment | mou
+    amount_text: Mapped[str | None] = mapped_column(String(100))
+    location: Mapped[str | None] = mapped_column(String(100), index=True)  # only if named in the text
+    state: Mapped[str | None] = mapped_column(String(60), index=True)  # from a place named in the text
+    fit: Mapped[str | None] = mapped_column(Text)  # how Inferago's services fit this project
+    links: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)  # connected companies [{company, role, quote, url, confirmed}]
+    links_checked_at: Mapped[datetime | None] = mapped_column(DateTime)
+    contact_log: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    last_contacted_at: Mapped[datetime | None] = mapped_column(DateTime)
+    next_follow_up: Mapped[datetime | None] = mapped_column(DateTime, index=True)
+    services: Mapped[list[str]] = mapped_column(JSON, default=list)
+    score: Mapped[float] = mapped_column(Float, default=0.0, index=True)
+    score_reasons: Mapped[list[str]] = mapped_column(JSON, default=list)
+    status: Mapped[str] = mapped_column(String(30), default="new", index=True)
+    notes: Mapped[str | None] = mapped_column(Text)
+
+
+class BusinessChain(TimestampMixin, Base):
+    """A local / regional business with several branches (found by grouping directory listings).
+
+    Evidence is kept: branches that share a phone number, social page or website, or the same
+    name + category in one state. One deal can cover every branch (CRM, billing, website).
+    """
+
+    __tablename__ = "business_chains"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    key: Mapped[str] = mapped_column(String(200), unique=True)  # normalised name
+    name: Mapped[str] = mapped_column(String(300))
+    type_label: Mapped[str] = mapped_column(String(120))
+    segment: Mapped[str] = mapped_column(String(40))
+    branch_count: Mapped[int] = mapped_column(Integer, index=True)
+    cities: Mapped[list[str]] = mapped_column(JSON, default=list)
+    states: Mapped[list[str]] = mapped_column(JSON, default=list)
+    main_state: Mapped[str | None] = mapped_column(String(60), index=True)
+    phones: Mapped[list[str]] = mapped_column(JSON, default=list)
+    socials: Mapped[list[str]] = mapped_column(JSON, default=list)
+    has_website: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    evidence: Mapped[str] = mapped_column(String(40))  # shared_contact | same_name_one_state
+    evidence_detail: Mapped[str | None] = mapped_column(Text)
+    branches: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)  # up to 30: name, address, city, phone, lat, lon, source_url
+    services: Mapped[list[str]] = mapped_column(JSON, default=list)
+    score: Mapped[float] = mapped_column(Float, default=0.0, index=True)
+    score_reasons: Mapped[list[str]] = mapped_column(JSON, default=list)
+    status: Mapped[str] = mapped_column(String(30), default="new", index=True)
+    notes: Mapped[str | None] = mapped_column(Text)
+    contact_log: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    last_contacted_at: Mapped[datetime | None] = mapped_column(DateTime)
+    next_follow_up: Mapped[datetime | None] = mapped_column(DateTime, index=True)
+
+
+class ChennaiLead(TimestampMixin, Base):
+    """A Chennai-city wholesale distributor or equipment sales & service company (owner brief 2026-11-23).
+
+    Facts come from a source with a URL (directory record, official website page, news article, or
+    the owner). Unknown stays NULL. Category (A–D) and sales difficulty are recomputed by
+    `app.leads.evaluate` from these facts and the lead's signals; every value carries its reasons.
+    """
+
+    __tablename__ = "chennai_leads"
+    __table_args__ = (UniqueConstraint("source_ref", name="uq_chennai_lead_source_ref"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(300))
+    normalized_name: Mapped[str] = mapped_column(String(300), index=True)
+    industry: Mapped[str | None] = mapped_column(String(40), index=True)  # wholesale_distribution | equipment_sales_service
+    industry_strength: Mapped[str] = mapped_column(String(20), default="candidate")  # strong | candidate | none
+    industry_subtype: Mapped[str | None] = mapped_column(String(30))
+    industry_reasons: Mapped[list[str]] = mapped_column(JSON, default=list)
+    directory_category: Mapped[str | None] = mapped_column(String(120))
+    address: Mapped[str | None] = mapped_column(Text)
+    locality: Mapped[str | None] = mapped_column(String(120))
+    pincode: Mapped[str | None] = mapped_column(String(10))
+    lat: Mapped[float | None] = mapped_column(Float)
+    lon: Mapped[float | None] = mapped_column(Float)
+    location_status: Mapped[str] = mapped_column(String(20), default="unknown", index=True)  # chennai_city | gcma_outside | outside | unknown
+    location_verified: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    location_basis: Mapped[str | None] = mapped_column(Text)
+    location_evidence_url: Mapped[str | None] = mapped_column(String(2048))
+    website: Mapped[str | None] = mapped_column(String(2048))
+    domain: Mapped[str | None] = mapped_column(String(253), index=True)
+    phones: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)  # [{value, source_url, official}]
+    emails: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)  # [{value, source_url, official}]
+    activity_status: Mapped[str] = mapped_column(String(20), default="unknown")  # active | likely_active | unknown | inactive | closed
+    activity_evidence: Mapped[str | None] = mapped_column(Text)
+    operations: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)  # [{key,label,excerpt,url}]
+    branch_count: Mapped[int | None] = mapped_column(Integer)
+    eligibility_blocker: Mapped[str | None] = mapped_column(Text)  # owner-entered mandatory obstacle
+    source: Mapped[str] = mapped_column(String(40))  # overture | manual | news
+    source_ref: Mapped[str] = mapped_column(String(200))
+    source_url: Mapped[str] = mapped_column(String(2048))
+    prescore: Mapped[float] = mapped_column(Float, default=0.0, index=True)  # research order only (not shown as a probability)
+    category: Mapped[str] = mapped_column(String(1), default="C", index=True)  # A | B | C | D
+    category_reasons: Mapped[list[str]] = mapped_column(JSON, default=list)
+    sales_difficulty: Mapped[str] = mapped_column(String(20), default="unknown", index=True)  # easier | moderate | difficult | unknown
+    difficulty_reasons: Mapped[list[str]] = mapped_column(JSON, default=list)
+    evidence_confidence: Mapped[str] = mapped_column(String(10), default="low")
+    potential_problem: Mapped[str | None] = mapped_column(Text)
+    suggested_solution: Mapped[str | None] = mapped_column(Text)
+    suggested_services: Mapped[list[str]] = mapped_column(JSON, default=list)
+    next_action: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(30), default="new", index=True)  # new | reviewing | approved | contacted | rejected | duplicate
+    duplicate_of_id: Mapped[int | None] = mapped_column(ForeignKey("chennai_leads.id", ondelete="SET NULL"))
+    outreach_draft: Mapped[str | None] = mapped_column(Text)
+    outreach_approved_by: Mapped[str | None] = mapped_column(String(100))
+    outreach_approved_at: Mapped[datetime | None] = mapped_column(DateTime)
+    notes: Mapped[str | None] = mapped_column(Text)
+    website_checked_at: Mapped[datetime | None] = mapped_column(DateTime)
+    website_check_error: Mapped[str | None] = mapped_column(Text)
+    last_verified_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+    signals: Mapped[list["LeadSignal"]] = relationship(back_populates="lead", cascade="all, delete-orphan", passive_deletes=True)
+
+
+class LeadSignal(Base):
+    """A dated piece of evidence that a lead may need software. `url` is mandatory.
+
+    Rule-detected signals are hypotheses until the owner confirms them; owner-added ones are confirmed.
+    `lead_id` is NULL for relevant Chennai news not yet matched to a company (market watch).
+    """
+
+    __tablename__ = "lead_signals"
+    __table_args__ = (UniqueConstraint("lead_id", "url", "signal_type", name="uq_lead_signal"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    lead_id: Mapped[int | None] = mapped_column(ForeignKey("chennai_leads.id", ondelete="CASCADE"), index=True)
+    signal_type: Mapped[str] = mapped_column(String(40), index=True)
+    strength: Mapped[str] = mapped_column(String(10))
+    title: Mapped[str | None] = mapped_column(String(500))
+    excerpt: Mapped[str] = mapped_column(Text)
+    url: Mapped[str] = mapped_column(String(2048))
+    source_name: Mapped[str | None] = mapped_column(String(120))
+    published_at: Mapped[datetime | None] = mapped_column(DateTime, index=True)  # NULL = date unknown (never guessed)
+    detected_by: Mapped[str] = mapped_column(String(20))  # rule | manual
+    review_status: Mapped[str] = mapped_column(String(20), default="hypothesis", index=True)  # hypothesis | confirmed | rejected
+    reviewed_by: Mapped[str | None] = mapped_column(String(100))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+    lead: Mapped[ChennaiLead | None] = relationship(back_populates="signals")
+
+
+# IOI 3.0 tables register on the same metadata (Alembic autogenerate, tests).
+from app.ioi3 import models as _ioi3_models  # noqa: E402,F401

@@ -11,8 +11,9 @@ from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app import jobs
-from app.api import core, opportunities, outreach, sources
+from app.api import big_projects, chains, core, leads, opportunities, outreach, prospects, sources
 from app.api.deps import require_auth
+from app.ioi3.api import router as ioi3_router
 from app.config import get_settings
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -24,14 +25,64 @@ async def lifespan(_: FastAPI):
     from app.db import SessionLocal
     from app.source_registry import seed_sources
 
+    from app.ioi3 import core as ioi3_core
+    from app.ioi3 import engine as ioi3_engine
+
     with SessionLocal() as db:
         seed_sources(db)
         seed_default_actions(db)
+        _recover_prospect_runs(db)
+        ioi3_core.seed_sources(db)
+        ioi3_core.active_campaign(db)
+        ioi3_engine.recover(db)
+    ioi3_engine.start_worker()
     jobs.start()
     try:
         yield
     finally:
+        ioi3_engine.stop_worker()
         jobs.shutdown()
+
+
+def _recover_prospect_runs(db) -> None:
+    """A prospect search still 'running' at startup died with the previous process."""
+    from sqlalchemy import update
+
+    from app.db import utcnow
+    from app.models import ProspectRun
+
+    db.execute(update(ProspectRun).where(ProspectRun.status.in_(("running", "stopping"))).values(status="failed", finished_at=utcnow()))
+    # Prospects saved before phone checking existed: check their numbers once.
+    from sqlalchemy import select
+
+    from app.models import Prospect
+    from app.prospects import evaluate
+
+    from app.overture import extra_exclusion
+    from app.prospects import _COLLEGE_NAMES, exclusion_reason
+
+    from app.prospects import RULES_VERSION
+    from app.settings_store import get_setting, set_setting
+
+    if get_setting(db, "prospect_rules_version") == RULES_VERSION:
+        db.commit()
+        return
+    for p in db.scalars(select(Prospect)):  # rules changed since last start: re-check every prospect once
+        evaluate(p)
+        # Apply the chain / college / IT / government rules to prospects found before those rules existed.
+        if p.segment != "college" and p.type_label in ("School", "Coaching / training") and _COLLEGE_NAMES.search(p.name or ""):
+            p.segment, p.type_label = "college", "College / university"
+        why = exclusion_reason({**(p.raw_tags or {}), "website": p.website or ""}, p.name, p.business_type, p.type_label)
+        if not why and p.source == "overture":
+            why = extra_exclusion(p.name, p.type_label, p.segment)
+        if not why and p.status == "rejected" and (p.notes or "").startswith("Auto-skipped:"):
+            p.status = "new"  # a rule that skipped it has since been relaxed (e.g. dealers are allowed)
+            p.notes = (p.notes or "").split("\n", 1)[1] if "\n" in (p.notes or "") else None
+        if why and p.status in ("new", "shortlisted"):
+            p.status = "rejected"
+            p.notes = f"Auto-skipped: {why}." + (f"\n{p.notes}" if p.notes else "")
+    set_setting(db, "prospect_rules_version", RULES_VERSION)
+    db.commit()
 
 
 def create_app() -> FastAPI:
@@ -50,7 +101,7 @@ def create_app() -> FastAPI:
     )
     app.include_router(core.public, prefix="/api")
     protected = [Depends(require_auth)]
-    for r in (core.router, sources.router, opportunities.router, outreach.router):
+    for r in (ioi3_router, core.router, leads.router, sources.router, opportunities.router, outreach.router, prospects.router, big_projects.router, chains.router):
         app.include_router(r, prefix="/api", dependencies=protected)
     _mount_frontend(app)
     return app

@@ -1,0 +1,40 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg: 247 248 250;
+  --surface: 255 255 255;
+  --muted: 241 243 246;
+  --border: 226 230 235;
+  --fg: 17 24 39;
+  --subtle: 92 102 117;
+  --brand: 37 99 235;
+  --brand-fg: 255 255 255;
+  --brand-soft: 232 240 254;
+  --ok: 21 128 61;
+  --warn: 180 83 9;
+  --bad: 185 28 28;
+  --info: 29 78 216;
+  color-scheme: light;
+}
+.dark {
+  --bg: 14 17 22;
+  --surface: 22 26 33;
+  --muted: 30 35 44;
+  --border: 45 52 64;
+  --fg: 236 239 244;
+  --subtle: 160 169 184;
+  --brand: 96 145 255;
+  --brand-fg: 10 14 22;
+  --brand-soft: 30 41 66;
+  --ok: 74 222 128;
+  --warn: 251 191 36;
+  --bad: 248 113 113;
+  --info: 147 197 253;
+  color-scheme: dark;
+}
+html, body, #root { height: 100%; }
+body { @apply bg-bg text-fg antialiased; font-feature-settings: "cv11", "ss01"; }
+a { @apply text-brand hover:underline; }
+:focus-visible { outline: 2px solid rgb(var(--brand)); outline-offset: 2px; }

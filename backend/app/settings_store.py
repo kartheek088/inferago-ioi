@@ -21,6 +21,11 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "ERP integration",
         "external delivery partner",
         "software implementation subcontractor",
+        "need a website",
+        "SEO help",
+        "CRM implementation",
+        "SAP consultant contract",
+        "AI chatbot for business",
     ],
     # Added to ranking priority (not to the three scores) when geography is EXPLICITLY known.
     "country_priorities": [
@@ -43,6 +48,21 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "ai_document_extraction": True,
     # AI review agent (OpenRouter, or Claude if configured): reviews this many top new opportunities after each discovery run.
     "ai_auto_review_top_n": 3,
+    # Prospect finder (OpenStreetMap): areas to scan for businesses with no / weak online presence.
+    "prospect_areas": ["Chennai", "Coimbatore", "Madurai"],
+    "prospect_radius_m": 3000,
+    "prospect_max_per_area": 80,
+    # New searches keep only businesses WITHOUT a website and WITH a usable phone number.
+    "prospect_only_no_website": True,
+    "prospect_require_phone": True,
+    "big_projects_last_run": None,
+    "prospect_rules_version": None,
+    # Outreach etiquette: who you are (so people can check you're real), how much, and when.
+    "sender_name": "",
+    "sender_link": "",  # your website / Instagram / LinkedIn — something a business can check
+    "outreach_daily_cap": 25,
+    "outreach_hours": {"start": 10, "end": 19, "days": [0, 1, 2, 3, 4, 5]},  # IST, Mon–Sat
+    "max_messages_without_reply": 2,
 }
 
 

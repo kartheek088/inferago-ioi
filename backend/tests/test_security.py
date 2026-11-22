@@ -147,3 +147,24 @@ def test_proxied_request_needs_token(client, monkeypatch):
     assert client.get("/api/sources", headers={"X-Forwarded-For": "203.0.113.9"}).status_code == 403
     monkeypatch.setattr(get_settings(), "api_token", "tok")
     assert client.get("/api/sources", headers={"X-Forwarded-For": "203.0.113.9", "Authorization": "Bearer tok"}).status_code == 200
+
+
+def test_slow_drip_response_is_cut_off(web, monkeypatch):
+    """A server that trickles bytes forever must not hang a job."""
+    import httpx
+
+    from app.http_client import FetchError, SafeHttp
+
+    class Drip(httpx.SyncByteStream):
+        def __iter__(self):
+            while True:
+                yield b"x"
+
+    web.routes["http://slow.example/"] = lambda req: httpx.Response(200, stream=Drip(), headers={"content-type": "text/html"})
+    http = SafeHttp()
+    http.max_seconds = 0.2
+    try:
+        http.get("http://slow.example/")
+        raise AssertionError("should have been cut off")
+    except FetchError as exc:
+        assert "longer than" in str(exc) or "exceeded" in str(exc)

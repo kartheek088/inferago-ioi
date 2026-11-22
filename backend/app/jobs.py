@@ -103,6 +103,160 @@ def submit_discovery(job_id: int, *, background: bool = True) -> None:
         _run_discovery(job_id)
 
 
+def _run_prospect_search(run_id: int, radius_m: int, max_per_area: int, rules=None) -> None:
+    from app.models import ProspectRun
+    from app.prospects import run_prospect_search
+
+    with SessionLocal() as db:
+        run = db.get(ProspectRun, run_id)
+        if not run:
+            return
+        try:
+            run_prospect_search(db, run, radius_m=radius_m, max_per_area=max_per_area, rules=rules)
+        except Exception as exc:  # noqa: BLE001
+            log.exception("Prospect search %s failed", run_id)
+            db.rollback()
+            run = db.get(ProspectRun, run_id)
+            run.status, run.log = "failed", [*(run.log or []), str(exc)[:500]]
+            db.commit()
+
+
+def submit_prospect_search(run_id: int, *, radius_m: int, max_per_area: int, rules=None) -> None:
+    executor().submit(_run_prospect_search, run_id, radius_m, max_per_area, rules)
+
+
+def _run_map_scan(run_id: int, path: str, kwargs: dict) -> None:
+    from app.models import ProspectRun
+    from app.prospects import run_map_file_scan
+
+    with SessionLocal() as db:
+        run = db.get(ProspectRun, run_id)
+        if run:
+            run_map_file_scan(db, run, path, **kwargs)
+
+
+def submit_map_scan(run_id: int, path: str, **kwargs) -> None:
+    executor().submit(_run_map_scan, run_id, path, kwargs)
+
+
+def _run_overture(run_id: int, action: str, kwargs: dict) -> None:
+    from pathlib import Path
+
+    from app import overture
+    from app.db import utcnow
+    from app.http_client import SafeHttp
+    from app.models import ProspectRun
+
+    with SessionLocal() as db:
+        run = db.get(ProspectRun, run_id)
+        if not run:
+            return
+        if action == "scan":
+            overture.run_overture_scan(db, run, **kwargs)
+            return
+        try:  # download
+            http = SafeHttp()
+            release = overture.latest_release(http)
+            http.close()
+            out = Path(kwargs["folder"]) / f"overture-india-{release}.parquet"
+            run.log = [f"Downloading India business listings (release {release}). This takes 10–40 minutes…"]
+            db.commit()
+            n = overture.download_country(release, out)
+            run.log = [*run.log, f"✓ Downloaded {n:,} listings with a phone number to {out.name}."]
+            run.status, run.found = "success", 0
+        except Exception as exc:  # noqa: BLE001
+            log.exception("Overture download failed")
+            run.log, run.status = [*(run.log or []), f"✗ Download failed: {str(exc)[:300]}"], "failed"
+        run.finished_at = utcnow()
+        db.commit()
+
+
+def _run_website_checks(run_id: int, limit: int, state: str | None, segment: str | None) -> None:
+    from sqlalchemy import select as _select
+
+    from app.db import utcnow
+    from app.http_client import SafeHttp
+    from app.models import Prospect, ProspectRun
+    from app.prospects import OPEN_STATUSES, audit_website
+
+    with SessionLocal() as db:
+        run = db.get(ProspectRun, run_id)
+        if not run:
+            return
+        stmt = _select(Prospect).where(Prospect.has_website.is_(True), Prospect.audited_at.is_(None), Prospect.status.in_(OPEN_STATUSES))
+        if state:
+            stmt = stmt.where(Prospect.state == state)
+        if segment:
+            stmt = stmt.where(Prospect.segment == segment)
+        todo = db.scalars(stmt.order_by(Prospect.score.desc()).limit(limit)).all()
+        run.log = [f"Checking {len(todo)} websites (homepage only, robots.txt respected)…"]
+        db.commit()
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        import threading
+
+        from app.prospects import apply_audit, fetch_audit
+
+        local = threading.local()
+
+        def work(pid: int, website: str):
+            if not hasattr(local, "http"):
+                local.http = SafeHttp(rate_limit_per_minute=30)  # one per thread; different sites run in parallel
+            return pid, fetch_audit(website, local.http)
+
+        upgrade, done = 0, 0
+        by_id = {p.id: p for p in todo}
+        try:
+            with ThreadPoolExecutor(max_workers=8, thread_name_prefix="ioi-audit") as pool:
+                futures = [pool.submit(work, p.id, p.website) for p in todo]
+                for fut in as_completed(futures):
+                    pid, audit = fut.result()
+                    apply_audit(by_id[pid], audit)  # DB work stays on this thread
+                    done += 1
+                    upgrade += int(by_id[pid].need_level == "upgrade")
+                    run.found = done
+                    if done % 10 == 0:
+                        run.log = [*run.log[:1], f"…checked {done} of {len(todo)}; {upgrade} need an upgrade so far"]
+                        db.commit()
+                        db.refresh(run, ["status"])
+                        if run.status == "stopping":
+                            for f in futures:
+                                f.cancel()
+                            run.log = [*run.log, "Stopped by you."]
+                            break
+            run.status = "stopped" if run.status == "stopping" else "success"
+            run.new = upgrade
+            run.log = [*run.log[:1], f"✓ Checked {done} websites: {upgrade} are broken or weak (need an upgrade)."]
+        except Exception as exc:  # noqa: BLE001
+            log.exception("Website checks failed")
+            db.rollback()
+            run.status, run.log = "failed", [*(run.log or []), f"✗ {str(exc)[:300]}"]
+        finally:
+            run.finished_at = utcnow()
+            db.commit()
+
+
+def submit_website_checks(run_id: int, *, limit: int, state: str | None = None, segment: str | None = None) -> None:
+    executor().submit(_run_website_checks, run_id, limit, state, segment)
+
+
+def _run_chains(run_id: int, path: str) -> None:
+    from app.chains import run_chain_search
+    from app.models import ProspectRun
+
+    with SessionLocal() as db:
+        run = db.get(ProspectRun, run_id)
+        if run:
+            run_chain_search(db, run, path)
+
+
+def submit_chains(run_id: int, path: str) -> None:
+    executor().submit(_run_chains, run_id, path)
+
+
+def submit_overture(run_id: int, action: str, **kwargs) -> None:
+    executor().submit(_run_overture, run_id, action, kwargs)
+
+
 def _run_research() -> None:
     from app.research import run_research_batch
 
@@ -125,9 +279,105 @@ def _scheduled_source_run(source_key: str) -> None:
         _run_discovery(job.id)
 
 
+def _scheduled_big_projects() -> None:
+    """Twice a day: read the news feeds for new big projects (read-only; nothing is sent)."""
+    from app.big_projects import run_project_search
+    from app.db import utcnow
+    from app.settings_store import set_setting
+
+    with SessionLocal() as db:
+        try:
+            stats = run_project_search(db)
+            set_setting(db, "big_projects_last_run", {"at": utcnow().isoformat(), "trigger": "scheduled", **stats})
+            db.commit()
+        except Exception:  # noqa: BLE001
+            log.exception("Scheduled big-project search failed")
+
+
+def _run_leads(run_id: int, action: str, kwargs: dict) -> None:
+    """Background Chennai lead work: collect (local file), research (websites) or news."""
+    from app import leads
+    from app.db import utcnow
+    from app.models import ProspectRun
+
+    with SessionLocal() as db:
+        run = db.get(ProspectRun, run_id)
+        if not run:
+            return
+        try:
+            if action == "collect":
+                stats = leads.collect(db, kwargs["path"], max_keep=kwargs.get("max_keep", 2000), run=run)
+                run.found, run.new = stats["read"], stats["new"]
+            elif action == "research":
+                stats = leads.research_batch(db, limit=kwargs.get("limit", 25), run=run)
+                run.found, run.updated = stats["checked"], stats["verified_chennai"]
+            elif action == "news":
+                stats = leads.scan_news(db, run=run)
+                run.found, run.new = stats["articles"], stats["new_signals"]
+            run.status = "stopped" if run.status == "stopping" else "success"
+        except Exception as exc:  # noqa: BLE001
+            log.exception("Lead job %s failed", action)
+            db.rollback()
+            run = db.get(ProspectRun, run_id)
+            run.status = "failed"
+            run.log = [*(run.log or []), f"Failed: {str(exc)[:300]}"]
+        run.finished_at = utcnow()
+        db.commit()
+
+
+def submit_leads(run_id: int, action: str, **kwargs) -> None:
+    executor().submit(_run_leads, run_id, action, kwargs)
+
+
+def _scheduled_lead_news() -> None:
+    from app.leads import RUN_LABEL
+    from app.models import ProspectRun
+
+    with SessionLocal() as db:
+        run = ProspectRun(areas=[f"{RUN_LABEL}: news (scheduled)"], status="running", log=[])
+        db.add(run)
+        db.commit()
+        run_id = run.id
+    _run_leads(run_id, "news", {})
+
+
+def _scheduled_ioi3_discovery() -> None:
+    from app.ioi3 import core, engine
+
+    with SessionLocal() as db:
+        camp = core.active_campaign(db)
+        try:
+            engine.start_job(db, camp, trigger="scheduled")
+        except (engine.JobConflict, engine.ConfigError) as exc:
+            log.info("Scheduled discovery skipped: %s", exc)
+
+
+def sync_ioi3_schedule() -> str:
+    """Register the IOI 3.0 discovery schedule (Settings → Discovery → Schedule). Returns the schedule."""
+    from app.ioi3 import core
+
+    if _scheduler is None:
+        return "off"
+    with SessionLocal() as db:
+        sched = core.campaign_settings(core.active_campaign(db)).get("schedule", "off")
+    if _scheduler.get_job("ioi3_discovery"):
+        _scheduler.remove_job("ioi3_discovery")
+    if sched in ("daily", "weekly"):
+        _scheduler.add_job(_scheduled_ioi3_discovery, "interval", days=1 if sched == "daily" else 7, id="ioi3_discovery",
+                           replace_existing=True, max_instances=1, coalesce=True, misfire_grace_time=3600)
+    return sched
+
+
 def sync_schedule() -> list[str]:
     """(Re)register per-source interval jobs. Returns the scheduled source keys."""
     if _scheduler is None:
+        return []
+    if get_settings().chennai_only:
+        # Chennai scope: none of the registered source connectors (job boards, GeM, generic RSS) are
+        # Chennai-specific, so none are scheduled. Their settings are left untouched (reversible).
+        for job in _scheduler.get_jobs():
+            if job.id.startswith("source:"):
+                job.remove()
         return []
     with SessionLocal() as db:
         sources = db.scalars(select(Source).where(Source.enabled.is_(True), Source.schedule_enabled.is_(True))).all()
@@ -149,6 +399,14 @@ def start() -> None:
         _scheduler = BackgroundScheduler(timezone="UTC")
         _scheduler.start()
         keys = sync_schedule()
+        if get_settings().chennai_only:
+            # IOI 3.0: legacy ingestion (incl. the v2.5 Chennai lead news job) is off. Only the optional
+            # IOI 3.0 discovery schedule chosen in Settings runs.
+            sync_ioi3_schedule()
+            log.info("Scheduler started in IOI 3.0 Chennai mode (legacy jobs disabled)")
+            return
+        _scheduler.add_job(_scheduled_big_projects, "interval", hours=12, id="big_projects", replace_existing=True,
+                           max_instances=1, coalesce=True, misfire_grace_time=3600)
         log.info("Scheduler started for sources: %s", keys)
 
 

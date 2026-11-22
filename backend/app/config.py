@@ -30,6 +30,17 @@ class Settings(BaseSettings):
     # Scheduler is opt-in.
     scheduler_enabled: bool = False
 
+    # Discovery scope. "chennai" (default, owner decision 2026-11-23): only the Chennai lead pipeline
+    # runs; all-India / worldwide discovery (prospect scans, multi-branch, India-wide news, job-board
+    # connectors) is refused and never scheduled. "all" restores the old behaviour.
+    discovery_scope: str = "chennai"
+    # IOI 3.0 background discovery worker (tests turn it off and drive jobs directly).
+    ioi3_worker: bool = True
+
+    @property
+    def chennai_only(self) -> bool:
+        return self.discovery_scope.strip().lower() != "all"
+
     # Outbound HTTP safety limits
     http_timeout_seconds: float = 15.0
     http_max_bytes: int = 5 * 1024 * 1024

@@ -5,7 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app import jobs
-from app.api.deps import DB, Paging, actor, paginate
+from app.api.deps import NATIONWIDE, DB, Paging, actor, paginate
 from app.config import get_settings
 from app.documents import DocumentError
 from app.enums import ConnectorStatus
@@ -108,7 +108,7 @@ def get_run(run_id: int, db: Session = DB):
     return r
 
 
-@router.post("/discovery/jobs", response_model=DiscoveryJobOut, status_code=202, tags=["discovery"])
+@router.post("/discovery/jobs", response_model=DiscoveryJobOut, status_code=202, dependencies=NATIONWIDE, tags=["discovery"])
 def create_job(body: DiscoveryJobIn, wait: bool = False, db: Session = DB, who: str = Depends(actor)):
     """Start a manual discovery run. Runs in the background unless `wait=true`."""
     srcs = {s.key: s for s in db.scalars(select(Source).where(Source.key.in_(body.source_keys))).all()}

@@ -11,6 +11,9 @@ os.environ["IOI_DATABASE_URL"] = f"sqlite:///{_TMP}/test.db"
 os.environ["IOI_UPLOAD_DIR"] = f"{_TMP}/uploads"
 os.environ["IOI_API_TOKEN"] = ""
 os.environ["IOI_SCHEDULER_ENABLED"] = "false"
+# Legacy tests exercise nationwide discovery; Chennai-only scope tests switch it on explicitly (chennai_scope fixture).
+os.environ["IOI_DISCOVERY_SCOPE"] = "all"
+os.environ["IOI_IOI3_WORKER"] = "false"  # tests run discovery jobs synchronously via engine.run_next
 os.environ["IOI_OPENROUTER_API_KEY"] = ""
 os.environ["IOI_REDDIT_CLIENT_ID"] = ""
 
@@ -107,6 +110,16 @@ def web(monkeypatch) -> MockWeb:
     monkeypatch.setattr(http_client, "default_resolver", lambda host: ["93.184.216.34"])
     monkeypatch.setattr(http_client._rate_limiter, "wait", lambda host, per_minute: None)
     return w
+
+
+@pytest.fixture
+def chennai_scope(monkeypatch):
+    """Production default: Chennai-only discovery."""
+    monkeypatch.setenv("IOI_DISCOVERY_SCOPE", "chennai")
+    get_settings.cache_clear()
+    yield
+    monkeypatch.setenv("IOI_DISCOVERY_SCOPE", "all")
+    get_settings.cache_clear()
 
 
 @pytest.fixture

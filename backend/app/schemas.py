@@ -489,6 +489,15 @@ class SettingsUpdate(BaseModel):
     ai_classification_refinement: bool | None = None
     ai_document_extraction: bool | None = None
     ai_auto_review_top_n: int | None = Field(None, ge=0, le=50)
+    prospect_areas: list[str] | None = Field(None, max_length=60)
+    prospect_radius_m: int | None = Field(None, ge=500, le=15000)
+    prospect_max_per_area: int | None = Field(None, ge=1, le=500)
+    prospect_only_no_website: bool | None = None
+    prospect_require_phone: bool | None = None
+    sender_name: str | None = Field(None, max_length=80)
+    sender_link: str | None = Field(None, max_length=300)
+    outreach_daily_cap: int | None = Field(None, ge=1, le=200)
+    max_messages_without_reply: int | None = Field(None, ge=1, le=5)
 
 
 class AIReviewOut(ORM):
@@ -543,3 +552,190 @@ class ActionUpdate(BaseModel):
     detail: str | None = Field(None, max_length=4000)
     status: str | None = Field(None, pattern="^(open|done|cancelled)$")
     due_date: datetime | None = None
+
+
+# --- Prospects ---------------------------------------------------------------------------------
+
+
+class ProspectOut(ORM):
+    id: int
+    name: str
+    segment: str
+    business_type: str
+    type_label: str
+    area: str | None
+    state: str | None
+    country: str | None
+    address: str | None
+    lat: float | None
+    lon: float | None
+    phone: str | None
+    phone_normalized: str | None
+    phone_type: str | None
+    phone_verified: bool
+    phone_verified_at: datetime | None
+    email: str | None
+    website: str | None
+    social_links: list[str]
+    opening_hours: str | None
+    has_website: bool
+    new_listing: bool
+    source: str
+    source_url: str
+    gaps: list[dict[str, Any]]
+    recommended_services: list[str]
+    audit: dict[str, Any]
+    audited_at: datetime | None
+    score: float
+    score_reasons: list[str]
+    need_level: str | None
+    need_reasons: list[str]
+    quality_level: str | None
+    quality_reasons: list[str]
+    qualification: dict[str, Any]
+    status: str
+    notes: str | None
+    last_contacted_at: datetime | None
+    next_follow_up: datetime | None
+    contact_log: list[dict[str, Any]]
+    created_at: datetime
+    updated_at: datetime
+
+
+PROSPECT_STATUS = "^(new|shortlisted|contacted|no_answer|callback|interested|qualified|proposal|won|not_interested|rejected)$"
+
+
+class ProspectUpdate(BaseModel):
+    status: str | None = Field(None, pattern=PROSPECT_STATUS)
+    notes: str | None = Field(None, max_length=5000)
+    next_follow_up: datetime | None = None
+
+
+class ProspectContactIn(BaseModel):
+    channel: str = Field(pattern="^(call|whatsapp|email|visit|other)$")
+    outcome: str = Field(pattern="^(contacted|no_answer|callback|interested|qualified|proposal|won|not_interested|rejected)$")
+    note: str | None = Field(None, max_length=2000)
+    callback_at: datetime | None = None
+    qualification: dict[str, Any] | None = None  # needs, budget, decision_maker, timeline
+
+
+class CheckWebsitesIn(BaseModel):
+    limit: int = Field(100, ge=1, le=2000)
+    state: str | None = None
+    segment: str | None = Field(None, pattern="^(small_business|professional|enterprise|college)$")
+
+
+class ProspectSearchIn(BaseModel):
+    areas: list[str] | None = Field(None, max_length=60)
+    radius_m: int | None = Field(None, ge=500, le=15000)
+    max_per_area: int | None = Field(None, ge=1, le=500)
+
+
+class ProspectRunOut(ORM):
+    id: int
+    areas: list[str]
+    status: str
+    found: int
+    new: int
+    updated: int
+    skipped: int
+    log: list[str]
+    started_at: datetime
+    finished_at: datetime | None
+
+
+class MapScanIn(BaseModel):
+    folder: str = Field(pattern="^(maps|downloads)$")
+    file: str = Field(min_length=5, max_length=200, pattern=r"^[A-Za-z0-9._-]+\.osm\.pbf$")
+    region: str = Field("Tamil Nadu", pattern="^(Tamil Nadu|Whole file)$")
+    cities: list[str] | None = Field(None, max_length=60)
+    radius_km: float = Field(15.0, ge=1, le=100)
+    max_keep: int = Field(20000, ge=10, le=100000)
+
+
+class ProjectLeadOut(ORM):
+    id: int
+    url: str
+    title: str
+    summary: str | None
+    feed: str
+    published_at: datetime | None
+    company: str | None
+    project_type: str
+    amount_text: str | None
+    location: str | None
+    state: str | None
+    fit: str | None
+    links: list[dict[str, Any]]
+    contact_log: list[dict[str, Any]]
+    last_contacted_at: datetime | None
+    next_follow_up: datetime | None
+    services: list[str]
+    score: float
+    score_reasons: list[str]
+    status: str
+    notes: str | None
+    created_at: datetime
+
+
+class ProjectLeadUpdate(BaseModel):
+    status: str | None = Field(None, pattern="^(new|shortlisted|contacted|interested|not_interested|won|rejected)$")
+    notes: str | None = Field(None, max_length=5000)
+    next_follow_up: datetime | None = None
+
+
+class ProjectContactIn(BaseModel):
+    channel: str = Field(pattern="^(call|whatsapp|email|linkedin|visit|intro|other)$")
+    outcome: str = Field(pattern="^(contacted|interested|not_interested|won|rejected)$")
+    note: str | None = Field(None, max_length=2000)
+
+
+class LinkConfirmIn(BaseModel):
+    confirmed: bool
+
+
+class OvertureScanIn(BaseModel):
+    file: str = Field(min_length=5, max_length=200, pattern=r"^overture-[A-Za-z0-9._-]+\.parquet$")
+    cities: list[str] | None = Field(None, max_length=100)
+    radius_km: float = Field(15.0, ge=1, le=100)
+    max_keep: int = Field(200000, ge=10, le=1000000)
+    min_confidence: float = Field(0.3, ge=0, le=1)
+    mode: str = Field("no_website", pattern="^(no_website|upgrade|colleges|new)$")
+
+
+class ChainOut(ORM):
+    id: int
+    name: str
+    type_label: str
+    segment: str
+    branch_count: int
+    cities: list[str]
+    states: list[str]
+    main_state: str | None
+    phones: list[str]
+    socials: list[str]
+    has_website: bool
+    evidence: str
+    evidence_detail: str | None
+    branches: list[dict[str, Any]]
+    services: list[str]
+    score: float
+    score_reasons: list[str]
+    status: str
+    notes: str | None
+    contact_log: list[dict[str, Any]]
+    last_contacted_at: datetime | None
+    next_follow_up: datetime | None
+
+
+class ChainUpdate(BaseModel):
+    status: str | None = Field(None, pattern=PROSPECT_STATUS)
+    notes: str | None = Field(None, max_length=5000)
+    next_follow_up: datetime | None = None
+
+
+class ChainContactIn(BaseModel):
+    channel: str = Field(pattern="^(call|whatsapp|email|visit|other)$")
+    outcome: str = Field(pattern="^(contacted|no_answer|callback|interested|qualified|proposal|won|not_interested|rejected)$")
+    note: str | None = Field(None, max_length=2000)
+    callback_at: datetime | None = None

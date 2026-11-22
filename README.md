@@ -1,93 +1,174 @@
-# Inferago Opportunity Intelligence (IOI)
+# Inferago Opportunity Intelligence (IOI) 3.0
 
-Internal, locally-run tool for **Inferago Tech Services** that discovers, collects, deduplicates,
-classifies, checks eligibility for, scores, researches and prepares outreach for software
-development opportunities — with a human approving every outbound action.
+An internal sales workspace for **Inferago Tech Services**. It finds **Chennai** businesses in two industries:
 
+- **Equipment Sales & Service**: medical, lab, industrial, electrical and commercial equipment companies that install, repair and maintain.
+- **Wholesale Distribution**: B2B distributors with repeat orders, stock and dispatch.
+
+IOI checks each business against real sources and shows which facts are verified and which are guesses. It
+prepares an outreach message for you to approve and then tracks the sale through to the payment you actually receive.
+
+IOI **never contacts anyone by itself**. You copy the message and contact the business yourself.
+
+---
+
+## 1. Install
+
+You need:
+
+| | Version | Get it |
+|---|---|---|
+| Python | 3.11 or newer | https://www.python.org/downloads/ (Ubuntu: `sudo apt install python3 python3-venv`) |
+| Node.js | 18 or newer | https://nodejs.org/ |
+| uv (optional, faster) | any | https://docs.astral.sh/uv/ |
+
+Then download the project folder. Nothing else needs to be installed by hand: the start script installs
+the rest the first time it runs, which takes a few minutes.
+
+## 2. Start
+
+**Linux / macOS**
+
+```bash
+./start.sh
 ```
-Discover → Collect → Deduplicate → Classify → Filter → Research selectively → Verify
-→ Evaluate eligibility → Score → Discover connected opportunities → Find contact routes
-→ Prepare outreach → Human approval → Follow-up
+
+**Windows (PowerShell)**
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\start.ps1
 ```
 
-Not SaaS. V1 never sends email, places calls, submits bids, registers as a vendor or signs anything.
+The script checks Python and Node, installs packages if needed, updates the database safely, builds the
+web app if anything changed, and starts IOI in the background. It prints the address to open.
 
-## Stack
+> The Windows script was written for this release but has not been tested on a Windows machine yet.
 
-| Layer | Tech |
+## 3. Open the app
+
+Open **http://127.0.0.1:8000** in your browser. The first time, a five-step setup wizard asks you to:
+
+1. Confirm your business profile.
+2. Confirm Chennai and the two industries.
+3. Check which discovery sources are ready.
+4. Optionally connect AI.
+5. Optionally run a small first discovery.
+
+If IOI is set to accept connections from other devices (`IOI_HOST=0.0.0.0` in `.env`), those devices are
+asked for the access token (`IOI_API_TOKEN` in `.env`). The computer IOI runs on doesn't need it.
+
+## 4. Sources (where businesses come from)
+
+| Source | What it does | Cost |
+|---|---|---|
+| **Business directory** (Overture Maps open data) | Finds businesses: name, category, address, phone, website. Read from a local file. | Free |
+| **Company websites** | Checks a few public pages per company: Chennai address, services, AMC/technicians, contacts, dated news. robots.txt is respected. | Free |
+| **Chennai business news** (RSS from The Hindu, BusinessLine, ET) | Finds dated expansion, new-facility and technology news and matches it to companies. | Free |
+| **CSV import** | Lists you are allowed to use, such as exhibitor or association lists. | Free |
+| **Add business** | Anything you found yourself, such as a LinkedIn post or an IndiaMART page, with its link. | Free |
+| **AI** (optional) | Deep research only, within your per-run limit. Every statement it keeps must be quoted word-for-word from the company's site. | Your OpenRouter/Anthropic account |
+
+The directory file must be downloaded once (about 350 MB, 10–40 minutes): **Settings → Advanced →
+Business directory file → Download**. Source health is shown in **Settings → Advanced**. A source is marked
+"working" only after a real successful retrieval.
+
+IOI does **not** read Google Maps, LinkedIn, JustDial or IndiaMART automatically, because their terms don't
+allow it. Add those finds with **Prospects → Add business**.
+
+To enable AI, put `IOI_OPENROUTER_API_KEY` and `IOI_OPENROUTER_MODEL` (or `IOI_ANTHROPIC_API_KEY`) in `.env`
+and restart. Keys stay in `.env` and are never shown in the app.
+
+## 5. Find businesses
+
+Go to **Discover** and click **Start Discovery**. Choose a depth:
+
+- **Quick**: directory only. Checks location and industry; visits no websites.
+- **Balanced** (recommended): also reads news and researches the most promising websites.
+- **Deep**: reads more pages per site and uses AI if it's configured.
+
+You can watch each stage as it runs and leave the page meanwhile. **Stop** finishes the current item and
+keeps everything already done. **Retry** reruns a run that failed or was interrupted, or only the sources that failed.
+
+## 6. Review prospects
+
+Go to **Prospects**. The tabs are:
+
+- **Ready to Review**: passed every check. Up to your daily limit, 5 by default.
+- **High-Fit**: P0 and P1.
+- **Watchlist**: relevant, but needs one more check or a buying signal.
+- **All Businesses**.
+
+Open a business to see what it does, why it fits, every source with its date, and the suggested offer:
+ServiceFlow, OrderFlow, Integration Fix or Small Automation. Each fact is labelled:
+
+- **Verified**: seen in a source you can open.
+- **Hypothesis**: IOI's guess, to check with the buyer.
+- **Buyer confirmed**: the buyer told you.
+- **Unknown**: IOI doesn't know.
+
+Signals that IOI detects stay *unconfirmed* until you read the source and click **Confirm**.
+
+| Category | Meaning |
 |---|---|
-| Backend | Python 3.11+, FastAPI, SQLAlchemy 2.x, Alembic, SQLite, Pydantic v2, httpx, APScheduler 3 |
-| Documents | pypdf, python-docx |
-| Frontend | React 18 + Vite 5 + TypeScript (no UI framework) |
-| AI (optional) | OpenRouter adapter — app runs fully without it |
+| P0 Confirmed opportunity | Passes every check **and** has a need you confirmed, or that the buyer told you |
+| P1 High-fit prospect | Passes every check and has a recent trigger, such as a new service centre or expansion |
+| P2 Watchlist | Relevant, but limited evidence so far |
+| P3 Excluded | Outside Chennai, wrong industry, inactive, duplicate or rejected |
 
-## Quick start
+The score (out of 100) only ranks businesses within a category and never overrides the checks.
 
-Prerequisites: [uv](https://docs.astral.sh/uv/), Node 18+ and npm.
+## 7. Approve and contact
 
-```bash
-cd inferago-ioi
-scripts/setup.sh        # creates .env from .env.example, installs deps, runs migrations
-scripts/dev.sh          # backend on http://127.0.0.1:8000, UI on http://127.0.0.1:5173
-```
+On a prospect, edit the message if you want, then click **Approve for Outreach**. Approval is only possible
+once every check has passed.
 
-Open http://127.0.0.1:5173 → **Discover** → tick *Hacker News* → **Run discovery**.
+In **Outreach**: **Copy message** → contact them yourself → **Mark as contacted** → **Record reply** →
+**Schedule follow-up**. An interested buyer moves to **Sales Pipeline**, where you record proposals and payments.
 
-Manual equivalents:
+Only payments you record count as collected revenue. Estimates and quotes are shown separately.
 
-```bash
-# backend
-cd backend
-uv sync
-uv run alembic upgrade head
-uv run python -m app.main            # also applies migrations; binds 127.0.0.1:8000
-
-# frontend (second terminal)
-cd frontend
-npm install
-npm run dev                          # proxies /api → 127.0.0.1:8000
-```
-
-API docs (OpenAPI): http://127.0.0.1:8000/docs
-
-Single port (no Vite): `cd frontend && npm run build`, then run the backend and open http://127.0.0.1:8000.
-Researched partner programmes: `cd backend && uv run python ../scripts/seed_partner_programmes.py`.
-
-## Tests
+## 8. Stop
 
 ```bash
-scripts/test.sh                      # everything below
-cd backend && uv run pytest -q       # 110 backend tests, no live network
-cd frontend && npm run typecheck && npm run build
+./stop.sh                     # Windows: .\stop.ps1
 ```
 
-## Integration status (honest)
+A running discovery stops gracefully, and completed work is already saved.
 
-| Source | Status |
+## 9. Back up and export
+
+- **Settings → Data → Back up now** makes a full, integrity-checked copy in `backend/data/backups/`.
+- **Settings → Data → Export prospects (CSV)**.
+- **Legacy archive**: records from earlier IOI versions (about 340,000 all-India records). They are kept,
+  read-only and exportable as CSV, and never loaded into the active campaign.
+- **Start a new campaign** archives the current one and starts empty. Nothing is deleted.
+
+**Restore a backup:** run `./stop.sh`, copy the backup over `backend/data/ioi.db`, delete
+`backend/data/ioi.db-wal` and `ioi.db-shm` if present, then run `./start.sh`.
+
+**Roll back the code:** `git checkout v2.5-chennai` (the Chennai version before 3.0) or `git checkout v2-final`
+(the version before the Chennai refocus), then restore the matching database backup.
+
+## 10. Troubleshooting
+
+| Problem | Fix |
 |---|---|
-| Hacker News — Seeking-Freelancer thread, contract roles in Who-is-hiring, keyword search | **Live** (public APIs, no key) |
-| n8n community "Jobs" + Make community "Hire a Pro" (public RSS) | **Live** (enabled by default) |
-| Generic RSS/Atom feed | **Live** once you set a permitted `feed_url` |
-| Manual URL import | **Manual** (owner-submitted, SSRF-protected, robots.txt respected) |
-| Tender / procurement document import (PDF, DOCX) | **Manual** |
-| Official company websites (selective research) | **Manual**, used by research workflow |
-| Reddit | **Credential-gated** — disabled until `IOI_REDDIT_*` set |
-| TN e-Procurement, CPPP, GeM, GePNIC, PSU, international portals | **Planned** — no connector; download docs manually and import |
-| Discord, Indie Hackers, Product Hunt, directories | **Planned** |
-| LinkedIn, freelance marketplaces | **Not automated by design** (platform restrictions are not bypassed) |
+| "IOI server is not reachable" in the browser | Run `./start.sh`. If it still fails, read `backend/data/ioi.log`. |
+| "Port 8000 is used by another program" | Change `IOI_PORT` in `.env`. |
+| Discover says the business directory file is missing | Settings → Advanced → Download directory file. |
+| A source shows "failing" | Settings → Advanced shows the last error. Feeds and websites sometimes block or time out; use **Retry failed sources**. |
+| "Can't approve yet" | The prospect page lists the missing checks. Use **Research further**, or add the evidence yourself. |
+| A company website "could not be loaded" | Some sites block automated readers or are down. Check by hand; if the address is right, use **Correct details → I checked the Chennai address here**. |
+| Asked for a token | Paste `IOI_API_TOKEN` from `.env`. |
 
-Full details: [docs/SOURCES.md](docs/SOURCES.md). Current status and known limitations:
-[docs/BUILD_STATUS.md](docs/BUILD_STATUS.md).
+## For developers
 
-## Documentation
+```bash
+scripts/test.sh                          # everything: backend tests, migration check, typecheck, unit tests, build, browser E2E
+cd backend && uv run pytest -q           # backend only (no live network)
+cd frontend && npm test                  # component tests (Vitest)
+cd frontend && npm run e2e               # Playwright acceptance test on a separate server + throwaway database
+scripts/dev.sh                           # backend :8000 + Vite dev server :5173 with hot reload
+```
 
-- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — modules, data model, pipeline
-- [docs/SETUP.md](docs/SETUP.md) — install, configure, run
-- [docs/SOURCES.md](docs/SOURCES.md) — source registry, connectors, adding feeds
-- [docs/ELIGIBILITY.md](docs/ELIGIBILITY.md) — deterministic eligibility engine
-- [docs/SCORING.md](docs/SCORING.md) — the three scoring algorithms
-- [docs/SECURITY.md](docs/SECURITY.md) — access control, SSRF, compliance
-- [docs/OPERATIONS.md](docs/OPERATIONS.md) — day-to-day use, scheduler, backups
-- [docs/DEPLOY.md](docs/DEPLOY.md) — local vs hosting (Tailscale, VPS + Caddy)
-- [docs/ROADMAP.md](docs/ROADMAP.md)
-- [docs/BUILD_STATUS.md](docs/BUILD_STATUS.md)
+See `docs/ARCHITECTURE.md` and `docs/BUILD_STATUS.md`.

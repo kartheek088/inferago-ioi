@@ -157,6 +157,7 @@ class SafeHttp:
         self.rate_limit = rate_limit_per_minute
         self.respect_robots = respect_robots
         self.max_bytes = max_bytes or s.http_max_bytes
+        self.max_seconds = s.http_timeout_seconds * 3  # total time for one response body
         self.allow_private = allow_private
         self.user_agent = s.http_user_agent
         self.requests_made = 0
@@ -202,10 +203,13 @@ class SafeHttp:
                     if declared and declared.isdigit() and int(declared) > self.max_bytes:
                         raise FetchError(f"Response too large ({declared} bytes)")
                     buf = bytearray()
+                    started = time.monotonic()
                     for chunk in resp.iter_bytes():
                         buf.extend(chunk)
                         if len(buf) > self.max_bytes:
                             raise FetchError(f"Response exceeded {self.max_bytes} bytes")
+                        if time.monotonic() - started > self.max_seconds:  # slow-drip servers never trip the read timeout
+                            raise FetchError(f"Took longer than {self.max_seconds:.0f}s to download {current}")
                     return FetchResult(
                         url=current,
                         status_code=resp.status_code,
@@ -230,7 +234,7 @@ class SafeHttp:
             raise FetchError(f"HTTP {res.status_code} from {res.url}")
         return res
 
-    def post_form(self, url: str, data: dict[str, str], *, headers=None) -> FetchResult:
+    def post_form(self, url: str, data: dict[str, str], *, headers=None, timeout: float | None = None) -> FetchResult:
         """POST a form to a public search endpoint (no redirects followed).
 
         Same SSRF, robots.txt, rate-limit and size guarantees as `get`. Only for read-only public
@@ -242,7 +246,8 @@ class SafeHttp:
         _rate_limiter.wait(urlsplit(url).hostname or "", self.rate_limit)
         self.requests_made += 1
         try:
-            with self.client.stream("POST", url, data=data, headers=headers) as resp:
+            extra = {"timeout": httpx.Timeout(timeout)} if timeout else {}
+            with self.client.stream("POST", url, data=data, headers=headers, **extra) as resp:
                 buf = bytearray()
                 for chunk in resp.iter_bytes():
                     buf.extend(chunk)
