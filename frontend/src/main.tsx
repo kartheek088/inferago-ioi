@@ -21,17 +21,19 @@ import Prospects from "./pages/Prospects";
 import BigProjects from "./pages/BigProjects";
 import CallList from "./pages/CallList";
 import MultiBranch from "./pages/MultiBranch";
+import Leads from "./pages/Leads";
 
 const MAIN_NAV: { to: string; label: string; icon: string; hint: string }[] = [
-  { to: "/", label: "Today", icon: "☀️", hint: "What to do now" },
-  { to: "/call", label: "Outreach list", icon: "💬", hint: "WhatsApp / call, log and qualify one by one" },
-  { to: "/prospects", label: "Prospects", icon: "🎯", hint: "No website, weak website, colleges" },
-  { to: "/multi-branch", label: "Multi-branch", icon: "🏬", hint: "Local chains with several branches" },
-  { to: "/big-projects", label: "Big projects", icon: "🏗️", hint: "New private projects where we fit" },
+  { to: "/", label: "Chennai leads", icon: "🎯", hint: "Chennai distributors and equipment service companies" },
   { to: "/follow-ups", label: "Follow-ups", icon: "⏰", hint: "Calls & reminders" },
 ]
 
 const MORE_NAV: { to: string; label: string }[] = [
+  { to: "/today", label: "Today (all-India, paused)" },
+  { to: "/call", label: "Outreach list (all-India, paused)" },
+  { to: "/prospects", label: "Prospects (all-India, paused)" },
+  { to: "/multi-branch", label: "Multi-branch (paused)" },
+  { to: "/big-projects", label: "Big projects (paused)" },
   { to: "/opportunities", label: "Projects & tenders" },
   { to: "/outreach", label: "Message drafts" },
   { to: "/discover", label: "Search for projects" },
@@ -71,7 +73,7 @@ function Shell() {
       </div>
       <aside className={`sidebar ${open ? "open" : ""}`} onClick={() => setOpen(false)}>
         <div className="brand"><span className="logo">i</span>Inferago</div>
-        <div className="brand-sub">Find clients · win work</div>
+        <div className="brand-sub">Chennai lead intelligence</div>
         <nav className="nav">
           {MAIN_NAV.map((n) => (
             <NavLink key={n.to} to={n.to} end={n.to === "/"} title={n.hint}>
@@ -91,7 +93,8 @@ function Shell() {
       </aside>
       <main className="main" key={loc.pathname}>
         <Routes>
-          <Route path="/" element={<Today />} />
+          <Route path="/" element={<Leads />} />
+          <Route path="/today" element={<Today />} />
           <Route path="/prospects" element={<Prospects />} />
           <Route path="/big-projects" element={<BigProjects />} />
           <Route path="/call" element={<CallList />} />

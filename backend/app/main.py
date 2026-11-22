@@ -11,7 +11,7 @@ from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app import jobs
-from app.api import big_projects, chains, core, opportunities, outreach, prospects, sources
+from app.api import big_projects, chains, core, leads, opportunities, outreach, prospects, sources
 from app.api.deps import require_auth
 from app.config import get_settings
 
@@ -92,7 +92,7 @@ def create_app() -> FastAPI:
     )
     app.include_router(core.public, prefix="/api")
     protected = [Depends(require_auth)]
-    for r in (core.router, sources.router, opportunities.router, outreach.router, prospects.router, big_projects.router, chains.router):
+    for r in (core.router, leads.router, sources.router, opportunities.router, outreach.router, prospects.router, big_projects.router, chains.router):
         app.include_router(r, prefix="/api", dependencies=protected)
     _mount_frontend(app)
     return app

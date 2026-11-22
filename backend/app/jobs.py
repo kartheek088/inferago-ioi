@@ -294,9 +294,63 @@ def _scheduled_big_projects() -> None:
             log.exception("Scheduled big-project search failed")
 
 
+def _run_leads(run_id: int, action: str, kwargs: dict) -> None:
+    """Background Chennai lead work: collect (local file), research (websites) or news."""
+    from app import leads
+    from app.db import utcnow
+    from app.models import ProspectRun
+
+    with SessionLocal() as db:
+        run = db.get(ProspectRun, run_id)
+        if not run:
+            return
+        try:
+            if action == "collect":
+                stats = leads.collect(db, kwargs["path"], max_keep=kwargs.get("max_keep", 2000), run=run)
+                run.found, run.new = stats["read"], stats["new"]
+            elif action == "research":
+                stats = leads.research_batch(db, limit=kwargs.get("limit", 25), run=run)
+                run.found, run.updated = stats["checked"], stats["verified_chennai"]
+            elif action == "news":
+                stats = leads.scan_news(db, run=run)
+                run.found, run.new = stats["articles"], stats["new_signals"]
+            run.status = "stopped" if run.status == "stopping" else "success"
+        except Exception as exc:  # noqa: BLE001
+            log.exception("Lead job %s failed", action)
+            db.rollback()
+            run = db.get(ProspectRun, run_id)
+            run.status = "failed"
+            run.log = [*(run.log or []), f"Failed: {str(exc)[:300]}"]
+        run.finished_at = utcnow()
+        db.commit()
+
+
+def submit_leads(run_id: int, action: str, **kwargs) -> None:
+    executor().submit(_run_leads, run_id, action, kwargs)
+
+
+def _scheduled_lead_news() -> None:
+    from app.leads import RUN_LABEL
+    from app.models import ProspectRun
+
+    with SessionLocal() as db:
+        run = ProspectRun(areas=[f"{RUN_LABEL}: news (scheduled)"], status="running", log=[])
+        db.add(run)
+        db.commit()
+        run_id = run.id
+    _run_leads(run_id, "news", {})
+
+
 def sync_schedule() -> list[str]:
     """(Re)register per-source interval jobs. Returns the scheduled source keys."""
     if _scheduler is None:
+        return []
+    if get_settings().chennai_only:
+        # Chennai scope: none of the registered source connectors (job boards, GeM, generic RSS) are
+        # Chennai-specific, so none are scheduled. Their settings are left untouched (reversible).
+        for job in _scheduler.get_jobs():
+            if job.id.startswith("source:"):
+                job.remove()
         return []
     with SessionLocal() as db:
         sources = db.scalars(select(Source).where(Source.enabled.is_(True), Source.schedule_enabled.is_(True))).all()
@@ -318,6 +372,12 @@ def start() -> None:
         _scheduler = BackgroundScheduler(timezone="UTC")
         _scheduler.start()
         keys = sync_schedule()
+        if get_settings().chennai_only:
+            # Only read-only Chennai news scanning (matched to existing leads). No collection, no outreach.
+            _scheduler.add_job(_scheduled_lead_news, "interval", hours=12, id="chennai_lead_news", replace_existing=True,
+                               max_instances=1, coalesce=True, misfire_grace_time=3600)
+            log.info("Scheduler started in Chennai-only scope (nationwide jobs disabled)")
+            return
         _scheduler.add_job(_scheduled_big_projects, "interval", hours=12, id="big_projects", replace_existing=True,
                            max_instances=1, coalesce=True, misfire_grace_time=3600)
         log.info("Scheduler started for sources: %s", keys)

@@ -7,7 +7,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app import jobs
-from app.api.deps import DB, Paging, actor, paginate
+from app.api.deps import NATIONWIDE, DB, Paging, actor, paginate
 from app.db import utcnow
 from app.models import BusinessChain, ProspectRun
 from app.schemas import ChainContactIn, ChainOut, ChainUpdate, Page, ProspectRunOut
@@ -60,7 +60,7 @@ def chains_summary(db: Session = DB):
     }
 
 
-@router.post("/multi-branch/find", response_model=ProspectRunOut, status_code=202)
+@router.post("/multi-branch/find", response_model=ProspectRunOut, status_code=202, dependencies=NATIONWIDE)
 def find_chains(db: Session = DB, who: str = Depends(actor)):
     from app.api.prospects import _busy, map_folders
 

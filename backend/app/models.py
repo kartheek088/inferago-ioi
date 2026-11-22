@@ -713,3 +713,93 @@ class BusinessChain(TimestampMixin, Base):
     contact_log: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
     last_contacted_at: Mapped[datetime | None] = mapped_column(DateTime)
     next_follow_up: Mapped[datetime | None] = mapped_column(DateTime, index=True)
+
+
+class ChennaiLead(TimestampMixin, Base):
+    """A Chennai-city wholesale distributor or equipment sales & service company (owner brief 2026-11-23).
+
+    Facts come from a source with a URL (directory record, official website page, news article, or
+    the owner). Unknown stays NULL. Category (A–D) and sales difficulty are recomputed by
+    `app.leads.evaluate` from these facts and the lead's signals; every value carries its reasons.
+    """
+
+    __tablename__ = "chennai_leads"
+    __table_args__ = (UniqueConstraint("source_ref", name="uq_chennai_lead_source_ref"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(300))
+    normalized_name: Mapped[str] = mapped_column(String(300), index=True)
+    industry: Mapped[str | None] = mapped_column(String(40), index=True)  # wholesale_distribution | equipment_sales_service
+    industry_strength: Mapped[str] = mapped_column(String(20), default="candidate")  # strong | candidate | none
+    industry_subtype: Mapped[str | None] = mapped_column(String(30))
+    industry_reasons: Mapped[list[str]] = mapped_column(JSON, default=list)
+    directory_category: Mapped[str | None] = mapped_column(String(120))
+    address: Mapped[str | None] = mapped_column(Text)
+    locality: Mapped[str | None] = mapped_column(String(120))
+    pincode: Mapped[str | None] = mapped_column(String(10))
+    lat: Mapped[float | None] = mapped_column(Float)
+    lon: Mapped[float | None] = mapped_column(Float)
+    location_status: Mapped[str] = mapped_column(String(20), default="unknown", index=True)  # chennai_city | gcma_outside | outside | unknown
+    location_verified: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    location_basis: Mapped[str | None] = mapped_column(Text)
+    location_evidence_url: Mapped[str | None] = mapped_column(String(2048))
+    website: Mapped[str | None] = mapped_column(String(2048))
+    domain: Mapped[str | None] = mapped_column(String(253), index=True)
+    phones: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)  # [{value, source_url, official}]
+    emails: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)  # [{value, source_url, official}]
+    activity_status: Mapped[str] = mapped_column(String(20), default="unknown")  # active | likely_active | unknown | inactive | closed
+    activity_evidence: Mapped[str | None] = mapped_column(Text)
+    operations: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)  # [{key,label,excerpt,url}]
+    branch_count: Mapped[int | None] = mapped_column(Integer)
+    eligibility_blocker: Mapped[str | None] = mapped_column(Text)  # owner-entered mandatory obstacle
+    source: Mapped[str] = mapped_column(String(40))  # overture | manual | news
+    source_ref: Mapped[str] = mapped_column(String(200))
+    source_url: Mapped[str] = mapped_column(String(2048))
+    prescore: Mapped[float] = mapped_column(Float, default=0.0, index=True)  # research order only (not shown as a probability)
+    category: Mapped[str] = mapped_column(String(1), default="C", index=True)  # A | B | C | D
+    category_reasons: Mapped[list[str]] = mapped_column(JSON, default=list)
+    sales_difficulty: Mapped[str] = mapped_column(String(20), default="unknown", index=True)  # easier | moderate | difficult | unknown
+    difficulty_reasons: Mapped[list[str]] = mapped_column(JSON, default=list)
+    evidence_confidence: Mapped[str] = mapped_column(String(10), default="low")
+    potential_problem: Mapped[str | None] = mapped_column(Text)
+    suggested_solution: Mapped[str | None] = mapped_column(Text)
+    suggested_services: Mapped[list[str]] = mapped_column(JSON, default=list)
+    next_action: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(30), default="new", index=True)  # new | reviewing | approved | contacted | rejected | duplicate
+    duplicate_of_id: Mapped[int | None] = mapped_column(ForeignKey("chennai_leads.id", ondelete="SET NULL"))
+    outreach_draft: Mapped[str | None] = mapped_column(Text)
+    outreach_approved_by: Mapped[str | None] = mapped_column(String(100))
+    outreach_approved_at: Mapped[datetime | None] = mapped_column(DateTime)
+    notes: Mapped[str | None] = mapped_column(Text)
+    website_checked_at: Mapped[datetime | None] = mapped_column(DateTime)
+    website_check_error: Mapped[str | None] = mapped_column(Text)
+    last_verified_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+    signals: Mapped[list["LeadSignal"]] = relationship(back_populates="lead", cascade="all, delete-orphan", passive_deletes=True)
+
+
+class LeadSignal(Base):
+    """A dated piece of evidence that a lead may need software. `url` is mandatory.
+
+    Rule-detected signals are hypotheses until the owner confirms them; owner-added ones are confirmed.
+    `lead_id` is NULL for relevant Chennai news not yet matched to a company (market watch).
+    """
+
+    __tablename__ = "lead_signals"
+    __table_args__ = (UniqueConstraint("lead_id", "url", "signal_type", name="uq_lead_signal"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    lead_id: Mapped[int | None] = mapped_column(ForeignKey("chennai_leads.id", ondelete="CASCADE"), index=True)
+    signal_type: Mapped[str] = mapped_column(String(40), index=True)
+    strength: Mapped[str] = mapped_column(String(10))
+    title: Mapped[str | None] = mapped_column(String(500))
+    excerpt: Mapped[str] = mapped_column(Text)
+    url: Mapped[str] = mapped_column(String(2048))
+    source_name: Mapped[str | None] = mapped_column(String(120))
+    published_at: Mapped[datetime | None] = mapped_column(DateTime, index=True)  # NULL = date unknown (never guessed)
+    detected_by: Mapped[str] = mapped_column(String(20))  # rule | manual
+    review_status: Mapped[str] = mapped_column(String(20), default="hypothesis", index=True)  # hypothesis | confirmed | rejected
+    reviewed_by: Mapped[str | None] = mapped_column(String(100))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+    lead: Mapped[ChennaiLead | None] = relationship(back_populates="signals")

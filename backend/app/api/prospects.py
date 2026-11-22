@@ -11,7 +11,7 @@ from sqlalchemy import Float, Integer, func, or_, select
 from sqlalchemy.orm import Session
 
 from app import jobs
-from app.api.deps import DB, Paging, actor, paginate
+from app.api.deps import NATIONWIDE, DB, Paging, actor, paginate
 from app.config import get_settings
 from app.db import utcnow
 from app.models import Prospect, ProspectRun
@@ -295,7 +295,7 @@ def prospect_runs(limit: int = Query(10, ge=1, le=100), db: Session = DB):
     return db.scalars(select(ProspectRun).order_by(ProspectRun.id.desc()).limit(limit)).all()
 
 
-@router.post("/prospects/find", response_model=ProspectRunOut, status_code=202)
+@router.post("/prospects/find", response_model=ProspectRunOut, status_code=202, dependencies=NATIONWIDE)
 def find_prospects(body: ProspectSearchIn, db: Session = DB, who: str = Depends(actor)):
     areas = body.areas or get_setting(db, "prospect_areas") or []
     if not areas:
@@ -366,7 +366,7 @@ def map_files():
             "regions": list(REGIONS)}
 
 
-@router.post("/prospects/scan-map-file", response_model=ProspectRunOut, status_code=202)
+@router.post("/prospects/scan-map-file", response_model=ProspectRunOut, status_code=202, dependencies=NATIONWIDE)
 def scan_map_file(body: MapScanIn, db: Session = DB, who: str = Depends(actor)):
     folder = map_folders()[body.folder].resolve()
     path = (folder / body.file).resolve()
@@ -406,7 +406,7 @@ def _calls_today(db: Session) -> dict[str, int]:
     return out
 
 
-@router.post("/prospects/check-websites", response_model=ProspectRunOut, status_code=202)
+@router.post("/prospects/check-websites", response_model=ProspectRunOut, status_code=202, dependencies=NATIONWIDE)
 def check_websites(body: CheckWebsitesIn, db: Session = DB, who: str = Depends(actor)):
     """Check the homepages of businesses that have a website, best first, to find who needs an upgrade."""
     _busy(db)
@@ -459,7 +459,7 @@ def _prev_ids(current: Path) -> str | None:
     return str(older[-1]) if older else None
 
 
-@router.post("/prospects/scan-overture", response_model=ProspectRunOut, status_code=202)
+@router.post("/prospects/scan-overture", response_model=ProspectRunOut, status_code=202, dependencies=NATIONWIDE)
 def scan_overture(body: OvertureScanIn, db: Session = DB, who: str = Depends(actor)):
     folder = map_folders()["maps"].resolve()
     path = (folder / body.file).resolve()

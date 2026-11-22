@@ -1,6 +1,6 @@
 # Build status
 
-_Last updated: 2026-11-21_
+_Last updated: 2026-11-23_
 
 ## Verification (all run locally)
 
@@ -19,6 +19,30 @@ _Last updated: 2026-11-21_
 `scripts/test.sh` runs the full suite.
 
 ## Implemented
+
+- **Chennai-only lead intelligence (2026-11-23, owner brief).** IOI is refocused on two industries in Chennai city:
+  wholesale distributors, and equipment sales companies that also do installation/repair/AMC.
+  - *Scope*: `IOI_DISCOVERY_SCOPE=chennai` (default). All-India prospect scans, multi-branch search, India-wide news projects
+    and job-board discovery runs return 409, and the scheduler registers none of them (only a 12-hourly Chennai news scan).
+    Old pages stay reachable under More tools, marked paused. `all` restores the old behaviour.
+  - *Geography* (`chennai.py`): Greater Chennai Corporation localities are in; metro-area places outside the city (Tambaram,
+    Avadi, Navalur…) are out unless the owner approves a locality (setting `chennai_approved_localities`); border localities
+    (Porur, Puzhal…) go to human review. An out-of-city locality wins over the word "Chennai". Directory addresses are never
+    "verified": only an official website page (or the owner, with a URL) can verify.
+  - *Pipeline* (`leads.py`): collect from the local Overture file (no network) → industry rules → dedupe (same name + phone /
+    domain / 300 m) → official-website check for the top N only (≤ 4 pages, robots.txt) → news RSS signals matched to lead names →
+    deterministic A–D category, sales difficulty, evidence confidence, next action. No AI calls.
+    Dry run on the 2026-11-18 Overture file: 62,961 listings in the Chennai box → 1,144 candidates (935 equipment, 209 wholesale;
+    902 with a city address in the directory). None are A or B until websites and signals are checked.
+  - *Signals*: rule-detected signals are unconfirmed until the owner confirms them; owner-added signals need a URL and are confirmed.
+    Category A = verified city address + strong industry match + active + confirmed dated (≤ 90 days) explicit need / vendor request /
+    operational problem + public contact route + no eligibility blocker. Expansion, new facilities and modernisation can reach B only.
+  - *Outreach*: brief, suggested solution, qualification questions and a draft per lead; only A/B can be approved; editing resets
+    approval; the owner contacts them and marks it. Nothing is sent.
+  - *Reset* (`reset.py`, CLI only): backup (SQLite online backup + CSV exports + manifest) → preview → execute with the backup path
+    and the exact phrase `DELETE <N> RECORDS`. Rows only; keeps sources, settings, audit logs, run history, partner-programme
+    records and Chennai leads. A backup older than the data is refused.
+  - Tests: `tests/test_chennai_leads.py` (location, industry, signals, A–D, difficulty, pipeline with mocked web, API, scope, reset safety).
 
 - **Prospects (2026-11-21).** Finds businesses and independent professionals with potential but weak or no
   online presence, using OpenStreetMap via a public Overpass mirror (overpass-api.de is skipped because its

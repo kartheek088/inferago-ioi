@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import String, func, or_, select
 from sqlalchemy.orm import Session
 
-from app.api.deps import DB, Paging, actor, paginate
+from app.api.deps import NATIONWIDE, DB, Paging, actor, paginate
 from app.db import utcnow
 import csv
 import io
@@ -99,7 +99,7 @@ def projects_summary(db: Session = DB):
     }
 
 
-@router.post("/big-projects/find")
+@router.post("/big-projects/find", dependencies=NATIONWIDE)
 def find_projects(db: Session = DB, who: str = Depends(actor)):
     if not _lock.acquire(blocking=False):
         raise HTTPException(409, "Already searching the news")

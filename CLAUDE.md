@@ -33,6 +33,10 @@ cd frontend && npm run typecheck && npm run build
 - **Compliance:** robots.txt, rate limits, no CAPTCHA/paywall bypass, no private channels,
   no LinkedIn/marketplace scraping. All outbound HTTP goes through `app/http_client.SafeHttp`.
 - **Do not mark sources live unless a working, tested connector exists.**
+- **Chennai-only scope (owner, 2026-11-23).** `IOI_DISCOVERY_SCOPE=chennai` is the default: nationwide
+  discovery endpoints return 409 and are never scheduled. Category A needs a human-confirmed, dated
+  (≤ 90 days) explicit need or operational problem; expansion/hiring is never software demand.
+  A Chennai address is verified only from an official site or by the owner, never from a directory or 044 code.
 - Tests must not hit the live internet — use the `web` fixture (httpx.MockTransport).
 
 ## Layout (backend/app)
@@ -50,6 +54,8 @@ cd frontend && npm run typecheck && npm run build
 | `research.py`, `contacts.py`, `relationships.py` | selective research, contact routes, chain graph |
 | `outreach.py` | drafts, approvals, call tasks, follow-ups |
 | `prospects.py` | prospect finder: OSM/Overpass search, segments, gap scoring, website audit, pitch drafts (`api/prospects.py`) |
+| `chennai.py`, `lead_rules.py`, `leads.py` | Chennai-only lead pipeline (default scope): city-limit geography, two-industry classification, signals, A–D category + sales difficulty, website verification, news signals (`api/leads.py`) |
+| `reset.py` | backup / preview / guarded execute of the old-data reset (CLI only; rows only, never tables) |
 | `documents.py`, `imports.py` | PDF/DOCX tender analysis, manual URL/doc import |
 | `http_client.py` | SSRF-safe fetcher (timeouts, size limits, robots, rate limit) |
 | `jobs.py` | bounded thread pool + opt-in APScheduler |
