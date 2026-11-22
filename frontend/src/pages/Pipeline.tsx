@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { ChevronLeft, ChevronRight, KanbanSquare } from "lucide-react";
+import { ChevronLeft, ChevronRight, FileText, Handshake, IndianRupee, KanbanSquare, Lightbulb } from "lucide-react";
 import { Badge, Button, Card, Empty, ErrorState, Field, Input, Modal, Msg, PageHeader, Select, Spinner, Stat, Textarea } from "../components/ui";
 import { api } from "../lib/api";
 import { useAction, useQuery } from "../lib/hooks";
@@ -29,10 +29,10 @@ export default function Pipeline() {
       {!d ? <Spinner /> : (
         <>
           <div className="mb-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
-            <Stat label="Potential (your estimates)" value={rupees(d.revenue.potential)} hint="Not revenue" />
-            <Stat label="Quoted" value={rupees(d.revenue.quoted)} hint="Proposals sent" />
-            <Stat label="Contracted" value={rupees(d.revenue.contracted)} hint={`Outstanding ${rupees(d.revenue.outstanding)}`} />
-            <Stat label="Collected this month" value={rupees(d.revenue.collected_this_month)} hint={d.goal ? `Goal ${rupees(d.goal)}` : undefined} />
+            <Stat label="Potential" value={rupees(d.revenue.potential)} hint="Your estimates — not revenue" tone="neutral" icon={<Lightbulb className="h-4 w-4" />} />
+            <Stat label="Quoted" value={rupees(d.revenue.quoted)} hint="Proposals sent" tone="info" icon={<FileText className="h-4 w-4" />} />
+            <Stat label="Contracted" value={rupees(d.revenue.contracted)} hint={`Outstanding ${rupees(d.revenue.outstanding)}`} tone="brand" icon={<Handshake className="h-4 w-4" />} />
+            <Stat label="Collected this month" value={rupees(d.revenue.collected_this_month)} hint={d.goal ? `Goal ${rupees(d.goal)}` : undefined} tone="ok" icon={<IndianRupee className="h-4 w-4" />} />
           </div>
           {d.deals.length === 0 ? (
             <Empty icon={<KanbanSquare className="h-6 w-6" />} title="No opportunities in the pipeline yet" action={<Link to="/outreach"><Button variant="primary">Go to Outreach</Button></Link>}>
@@ -40,16 +40,30 @@ export default function Pipeline() {
             </Empty>
           ) : (
             <>
+              <div className="mb-3 flex flex-wrap gap-1.5" aria-label="Stages summary">
+                {d.stages.map((s) => {
+                  const n = d.deals.filter((x) => x.stage === s.key && (showClosed || !x.outcome || x.outcome === "follow_up_later")).length;
+                  return (
+                    <button key={s.key} onClick={() => document.getElementById(`stage-${s.key}`)?.scrollIntoView({ behavior: "smooth", inline: "start", block: "nearest" })}
+                      className={`rounded-full border px-2.5 py-1 text-xs ${n ? "border-brand/30 bg-brand-soft font-medium text-brand" : "border-border text-subtle hover:bg-muted"}`}>
+                      {s.label}{n ? ` · ${n}` : ""}
+                    </button>
+                  );
+                })}
+              </div>
               <label className="mb-3 flex items-center gap-2 text-sm text-subtle"><input type="checkbox" checked={showClosed} onChange={(e) => setShowClosed(e.target.checked)} />Show closed outcomes (not interested, lost…)</label>
               <div className="flex gap-3 overflow-x-auto pb-4" aria-label="Pipeline board">
                 {d.stages.map((s, i) => {
                   const deals = d.deals.filter((x) => x.stage === s.key && (showClosed || !x.outcome || x.outcome === "follow_up_later"));
                   return (
-                    <section key={s.key} className="w-64 shrink-0 rounded-xl bg-muted/60 p-2" aria-label={s.label}>
-                      <h2 className="flex items-center justify-between px-2 py-1 text-sm font-semibold">{s.label}<span className="text-xs font-normal text-subtle">{deals.length}</span></h2>
+                    <section key={s.key} id={`stage-${s.key}`} className="w-64 shrink-0 scroll-ml-1 rounded-2xl border border-border/70 bg-muted/50 p-2" aria-label={s.label}>
+                      <div className="h-1 rounded-full" style={{ background: `hsl(${215 - i * 12} 70% ${i >= 7 ? 42 : 55}%)` }} aria-hidden />
+                      <h2 className="flex items-center justify-between px-2 pb-1 pt-2 text-sm font-semibold">{s.label}
+                        <span className="rounded-full bg-surface px-2 text-xs font-medium text-subtle">{deals.length}</span></h2>
+                      {deals.some((x) => x.quoted_amount) && <p className="px-2 text-xs tabular-nums text-subtle">{rupees(deals.reduce((a, x) => a + (x.quoted_amount ?? 0), 0))} quoted</p>}
                       <div className="mt-1 space-y-2">
                         {deals.map((x) => (
-                          <article key={x.id} className="rounded-lg border border-border bg-surface p-3 text-sm shadow-sm">
+                          <article key={x.id} className="rounded-xl border border-border bg-surface p-3 text-sm shadow-sm transition hover:shadow-md">
                             <button className="text-left font-medium hover:text-brand" onClick={() => setOpen(x)}>{x.company}</button>
                             {x.outcome && <div><Badge tone={x.outcome === "follow_up_later" ? "warn" : "bad"}>{d.outcomes.find((o) => o.key === x.outcome)?.label}</Badge></div>}
                             <div className="mt-1 text-xs text-subtle">{x.offer ?? "No offer yet"}</div>

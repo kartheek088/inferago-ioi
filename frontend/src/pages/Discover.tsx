@@ -136,23 +136,31 @@ function Progress({ job }: { job: Job }) {
     <Card title={<span className="flex items-center gap-2">Run #{job.id} <Badge tone={STATUS_TONE[job.status]}>{job.status}</Badge></span>}
       description={active ? `Last update ${ago(job.heartbeat_at ?? job.created_at)}` : job.finished_at ? `Finished ${date(job.finished_at, true)}` : undefined}>
       <div className="grid gap-6 lg:grid-cols-2">
-        <ol className="space-y-2" aria-label="Stages">
+        <ol className="relative space-y-3 before:absolute before:bottom-2 before:left-[7px] before:top-2 before:w-px before:bg-border" aria-label="Stages">
           {job.stages.map((s, i) => {
             const n = i + 1;
             const done = n < job.stage_index || (n === job.stage_index && !active && job.status === "completed");
             const now = n === job.stage_index && active;
             const skipped = !active && n > job.stage_index;
             return (
-              <li key={s.key} className={cn("flex items-center gap-2 text-sm", now ? "font-medium text-fg" : done ? "text-fg" : "text-subtle")}>
-                {now ? <Loader2 className="h-4 w-4 animate-spin text-brand" /> : done ? <CheckCircle2 className="h-4 w-4 text-ok" /> : <Circle className="h-4 w-4" />}
+              <li key={s.key} className={cn("relative flex items-center gap-2 text-sm", now ? "font-medium text-fg" : done ? "text-fg" : "text-subtle")}>
+                <span className="relative z-10 rounded-full bg-surface">{now ? <Loader2 className="h-4 w-4 animate-spin text-brand" /> : done ? <CheckCircle2 className="h-4 w-4 text-ok" /> : <Circle className="h-4 w-4" />}</span>
                 {n}. {s.label}{skipped && job.mode === "quick" && n > 3 && n < 6 ? <span className="text-xs">(not in Quick mode)</span> : null}
               </li>
             );
           })}
         </ol>
         <div className="space-y-3">
+          {c.total ? (
+            <div>
+              <div className="mb-1 flex justify-between text-xs text-subtle"><span>Businesses checked</span><span className="tabular-nums">{c.processed ?? 0} of {c.total}</span></div>
+              <div className="h-2 overflow-hidden rounded-full bg-muted" role="progressbar" aria-valuenow={c.processed ?? 0} aria-valuemax={c.total} aria-label="Businesses checked">
+                <div className="h-full rounded-full bg-brand transition-all" style={{ width: `${Math.min(100, ((c.processed ?? 0) / c.total) * 100)}%` }} />
+              </div>
+            </div>
+          ) : null}
           <div className="grid grid-cols-2 gap-2 text-sm sm:grid-cols-4">
-            <Count k="Reviewed" v={`${c.processed ?? 0}${c.total ? ` of ${c.total}` : ""}`} />
+            <Count k="Reviewed" v={c.total ? (c.processed ?? 0) : `${c.processed ?? 0}`} />
             <Count k="Added" v={c.accepted ?? 0} />
             <Count k="Rejected" v={(c.rejected_outside_total ?? c.rejected ?? 0) + (c.chain_outlets_total ?? 0)} />
             <Count k="Need checking" v={c.pending ?? 0} />
@@ -184,5 +192,5 @@ function Progress({ job }: { job: Job }) {
 }
 
 function Count({ k, v }: { k: string; v: React.ReactNode }) {
-  return <div className="rounded-lg bg-muted px-3 py-2"><div className="text-xs text-subtle">{k}</div><div className="font-semibold tabular-nums">{v}</div></div>;
+  return <div className="rounded-xl border border-border bg-bg px-3 py-2"><div className="text-xs text-subtle">{k}</div><div className="text-lg font-semibold tabular-nums">{v}</div></div>;
 }

@@ -28,20 +28,20 @@ export function Shell({ children, status }: { children: ReactNode; status?: Reac
     <div className="flex min-h-full">
       <aside className="sticky top-0 hidden h-screen w-60 shrink-0 flex-col border-r border-border bg-surface px-3 py-5 md:flex">
         <div className="px-3">
-          <div className="text-lg font-semibold tracking-tight">Inferago</div>
-          <div className="text-xs text-subtle">Opportunity Intelligence · Chennai</div>
+          <div className="flex items-baseline gap-2"><span className="text-lg font-semibold tracking-tight">Inferago</span><span className="rounded-md bg-brand-soft px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-brand">IOI</span></div>
+          <div className="mt-0.5 text-xs text-subtle">Sales workspace · Chennai</div>
         </div>
         <nav className="mt-6 flex flex-1 flex-col gap-1" aria-label="Main">
           {NAV.map((n) => (
             <NavLink key={n.to} to={n.to} end={n.to === "/"}
-              className={({ isActive }) => cn("flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium no-underline hover:no-underline",
-                isActive ? "bg-brand-soft text-brand" : "text-subtle hover:bg-muted hover:text-fg")}>
+              className={({ isActive }) => cn("relative flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium no-underline transition-colors hover:no-underline",
+                isActive ? "bg-brand-soft text-brand before:absolute before:-left-3 before:top-1.5 before:h-6 before:w-1 before:rounded-r-full before:bg-brand" : "text-subtle hover:bg-muted hover:text-fg")}>
               <n.icon className="h-4 w-4" aria-hidden />{n.label}
             </NavLink>
           ))}
         </nav>
-        <div className="space-y-2 px-1">
-          {status}
+        <div className="space-y-2 border-t border-border px-1 pt-3">
+          <div className="flex items-center justify-between px-2 text-xs text-subtle"><span>System</span>{status}</div>
           <button onClick={toggle} className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-sm text-subtle hover:bg-muted" aria-label="Toggle dark mode">
             {dark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}{dark ? "Light mode" : "Dark mode"}
           </button>

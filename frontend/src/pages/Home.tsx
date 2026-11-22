@@ -20,26 +20,29 @@ export default function Home() {
   const running = d?.last_job && ["queued", "running", "stopping"].includes(d.last_job.status);
   return (
     <>
-      <h1 className="text-2xl font-semibold tracking-tight">{greeting()}. Here's your sales workspace.</h1>
+      <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">{greeting()}. Here's your sales workspace.</h1>
       <p className="mt-1 text-sm text-subtle">Chennai · Equipment Sales & Service and Wholesale Distribution</p>
       <ErrorState error={q.error} onRetry={q.reload} />
       {!d ? <Spinner /> : (
         <div className="mt-6 space-y-6">
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-            <Stat label="Qualified prospects" value={d.stats.qualified} hint="Pass every check" icon={<Users className="h-4 w-4" />} />
-            <Stat label="New buying signals" value={d.stats.new_signals} hint="Last 7 days" icon={<Radio className="h-4 w-4" />} />
-            <Stat label="Follow-ups due" value={d.stats.follow_ups_due} icon={<BellRing className="h-4 w-4" />} />
-            <Stat label="Collected this month" value={rupees(d.stats.collected_this_month)} hint={d.goal ? `Goal ${rupees(d.goal)}` : undefined} icon={<IndianRupee className="h-4 w-4" />} />
+            <Stat label="Qualified prospects" value={d.stats.qualified} hint="Pass every check" icon={<Users className="h-4 w-4" />} tone="brand" />
+            <Stat label="New buying signals" value={d.stats.new_signals} hint="Last 7 days" icon={<Radio className="h-4 w-4" />} tone="info" />
+            <Stat label="Follow-ups due" value={d.stats.follow_ups_due} icon={<BellRing className="h-4 w-4" />} tone="warn" />
+            <Stat label="Collected this month" value={rupees(d.stats.collected_this_month)} hint={d.goal ? `Goal ${rupees(d.goal)}` : undefined} icon={<IndianRupee className="h-4 w-4" />} tone="ok" />
           </div>
 
-          <Card className="border-brand/30 bg-brand-soft/40">
+          <Card className="border-brand/25 bg-gradient-to-br from-brand-soft/70 to-surface">
             <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-              <div>
+              <div className="flex items-start gap-4">
+                <span className="hidden h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-brand text-brand-fg sm:flex"><Compass className="h-6 w-6" /></span>
+                <div>
                 <h2 className="text-lg font-semibold">Find Chennai Business Opportunities</h2>
                 <p className="mt-1 text-sm text-subtle">Equipment Sales & Service · Wholesale Distribution · Chennai</p>
                 <p className="mt-1 text-xs text-subtle">
                   {d.last_job ? <>Last run {ago(d.last_job.finished_at ?? d.last_job.created_at)} — <span className="capitalize">{d.last_job.status}</span></> : "No discovery run yet"}
                 </p>
+                </div>
               </div>
               <div className="flex flex-wrap gap-2">
                 <Link to="/discover"><Button variant="primary" size="lg"><Compass className="h-5 w-5" />{running ? "View progress" : "Start Discovery"}</Button></Link>

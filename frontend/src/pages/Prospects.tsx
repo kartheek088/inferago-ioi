@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { Plus, Search, Upload, Users } from "lucide-react";
+import { Plus, Search, SlidersHorizontal, Upload, Users } from "lucide-react";
 import { Button, Empty, ErrorState, Field, Input, Modal, Msg, PageHeader, Select, Spinner, Tabs } from "../components/ui";
 import { ProspectCard } from "../components/prospect";
 import { api } from "../lib/api";
@@ -21,6 +21,8 @@ export default function Prospects() {
   const act = useAction();
   const [addOpen, setAddOpen] = useState(false);
   const [csvOpen, setCsvOpen] = useState(false);
+  const [showFilters, setShowFilters] = useState(false);
+  const activeFilters = Object.entries(f).filter(([k, v]) => k !== "q" && v).length;
   const set = (k: keyof typeof f, v: string) => { setF({ ...f, [k]: v }); setOffset(0); };
   const refresh = () => { list.reload(); counts.reload(); };
   const quick = async (id: number, path: string, ok: string) => {
@@ -40,11 +42,15 @@ export default function Prospects() {
           <Button variant="primary" onClick={() => setAddOpen(true)}><Plus className="h-4 w-4" />Add business</Button>
         </>} />
       <Tabs tabs={tabs.map((t) => ({ ...t, count: counts.data?.[t.id] }))} value={tab} onChange={(t) => { setSp({ tab: t }); setOffset(0); }} />
-      <div className="my-4 flex flex-wrap gap-2">
-        <div className="relative min-w-[12rem] flex-1">
+      <div className="my-4 flex gap-2">
+        <div className="relative min-w-0 flex-1">
           <Search className="absolute left-3 top-3 h-4 w-4 text-subtle" />
           <Input className="pl-9" placeholder="Search name or area" value={f.q} onChange={(e) => set("q", e.target.value)} aria-label="Search" />
         </div>
+        <Button className="md:hidden" onClick={() => setShowFilters((v) => !v)} aria-expanded={showFilters}>
+          <SlidersHorizontal className="h-4 w-4" />Filters{activeFilters ? ` (${activeFilters})` : ""}</Button>
+      </div>
+      <div className={`mb-4 flex-wrap gap-2 md:flex ${showFilters ? "grid grid-cols-2" : "hidden"}`}>
         <Select value={f.industry} onChange={(e) => set("industry", e.target.value)} aria-label="Industry">
           <option value="">Both industries</option>{Object.entries(INDUSTRY).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
         </Select>

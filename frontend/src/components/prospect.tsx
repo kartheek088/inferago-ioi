@@ -1,6 +1,6 @@
 import { Link } from "react-router-dom";
 import { Building2, MapPin, Phone, Radio, ShieldCheck } from "lucide-react";
-import { Badge } from "./ui";
+import { Badge, ScoreRing } from "./ui";
 import { EVIDENCE, FRICTION, INDUSTRY, LOCATION, QUAL, date, type Tone } from "../lib/format";
 import type { CompanyCard } from "../lib/types";
 
@@ -19,7 +19,7 @@ export function EvidenceTag({ state }: { state: string }) {
 
 export function ProspectCard({ c, actions }: { c: CompanyCard; actions?: React.ReactNode }) {
   return (
-    <article className="rounded-xl border border-border bg-surface p-4 shadow-sm transition hover:border-brand/40" data-testid="prospect-card">
+    <article className="rounded-2xl border border-border/80 bg-surface p-5 shadow-[0_1px_2px_rgba(16,24,40,0.04)] transition hover:border-brand/40 hover:shadow-md" data-testid="prospect-card">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0">
           <Link to={`/prospects/${c.id}`} className="text-base font-semibold text-fg hover:text-brand">{c.name}</Link>
@@ -30,9 +30,9 @@ export function ProspectCard({ c, actions }: { c: CompanyCard; actions?: React.R
             {c.is_test && <Badge tone="warn">Test data</Badge>}
           </div>
         </div>
-        <div className="text-right">
-          <div className="text-xl font-semibold tabular-nums">{c.score}<span className="text-xs font-normal text-subtle">/100</span></div>
-          <div className="text-xs text-subtle">{FRICTION[c.friction]}</div>
+        <div className="flex items-center gap-3">
+          <div className="hidden text-right text-xs text-subtle sm:block">{FRICTION[c.friction]}</div>
+          <ScoreRing value={c.score} />
         </div>
       </div>
       {c.description && <p className="mt-3 text-sm text-subtle">{c.description}</p>}
@@ -45,8 +45,8 @@ export function ProspectCard({ c, actions }: { c: CompanyCard; actions?: React.R
         <div className="flex gap-2"><Phone className="mt-0.5 h-4 w-4 shrink-0 text-subtle" /><dd>{c.official_contact ? "Contact on their website" : c.has_contact ? "Directory contact" : <span className="text-subtle">No contact yet</span>}</dd></div>
         {c.offer && <div className="flex gap-2"><span className="mt-0.5 h-4 w-4 shrink-0 text-center text-subtle">→</span><dd>Suggested: <strong>{c.offer}</strong></dd></div>}
       </dl>
-      <p className="mt-3 rounded-lg bg-muted px-3 py-2 text-sm"><span className="font-medium">Next: </span>{c.next_action}</p>
-      {actions && <div className="mt-3 flex flex-wrap gap-2">{actions}</div>}
+      <p className="mt-4 flex items-start gap-2 rounded-xl bg-brand-soft/50 px-3 py-2 text-sm"><span className="font-semibold text-brand">Next</span><span>{c.next_action}</span></p>
+      {actions && <div className="mt-4 flex flex-wrap gap-2 border-t border-border pt-4">{actions}</div>}
     </article>
   );
 }

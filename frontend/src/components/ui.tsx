@@ -24,7 +24,7 @@ Button.displayName = "Button";
 
 export function Card({ className, children, title, action, description }: { className?: string; children: ReactNode; title?: ReactNode; action?: ReactNode; description?: ReactNode }) {
   return (
-    <section className={cn("rounded-xl border border-border bg-surface shadow-sm", className)}>
+    <section className={cn("rounded-2xl border border-border/80 bg-surface shadow-[0_1px_2px_rgba(16,24,40,0.04),0_1px_3px_rgba(16,24,40,0.06)]", className)}>
       {(title || action) && (
         <header className="flex items-start justify-between gap-3 px-5 pt-5">
           <div>
@@ -68,20 +68,27 @@ export function Field({ label, hint, children }: { label: string; hint?: ReactNo
   );
 }
 
-export function Stat({ label, value, hint, icon }: { label: string; value: ReactNode; hint?: ReactNode; icon?: ReactNode }) {
+export function Stat({ label, value, hint, icon, tone = "brand" }: { label: string; value: ReactNode; hint?: ReactNode; icon?: ReactNode; tone?: Tone }) {
+  const chip: Record<Tone, string> = { brand: "bg-brand-soft text-brand", ok: "bg-ok/10 text-ok", warn: "bg-warn/10 text-warn", bad: "bg-bad/10 text-bad",
+    info: "bg-info/10 text-info", neutral: "bg-muted text-subtle" };
   return (
-    <div className="rounded-xl border border-border bg-surface p-4 shadow-sm">
-      <div className="flex items-center justify-between text-sm text-subtle">{label}{icon}</div>
-      <div className="mt-2 text-2xl font-semibold tabular-nums">{value}</div>
-      {hint && <div className="mt-1 text-xs text-subtle">{hint}</div>}
+    <div className="rounded-2xl border border-border/80 bg-surface p-4 shadow-[0_1px_2px_rgba(16,24,40,0.04)]">
+      <div className="flex items-center gap-3">
+        {icon && <span className={cn("flex h-9 w-9 shrink-0 items-center justify-center rounded-xl", chip[tone])}>{icon}</span>}
+        <div className="min-w-0">
+          <div className="truncate text-xs font-medium uppercase tracking-wide text-subtle">{label}</div>
+          <div className="text-2xl font-semibold tabular-nums leading-tight">{value}</div>
+        </div>
+      </div>
+      {hint && <div className="mt-2 text-xs text-subtle">{hint}</div>}
     </div>
   );
 }
 
 export function Empty({ icon, title, children, action }: { icon?: ReactNode; title: string; children?: ReactNode; action?: ReactNode }) {
   return (
-    <div className="flex flex-col items-center rounded-xl border border-dashed border-border px-6 py-10 text-center">
-      {icon && <div className="mb-3 text-subtle">{icon}</div>}
+    <div className="flex flex-col items-center rounded-2xl border border-dashed border-border bg-surface/50 px-6 py-12 text-center">
+      {icon && <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-brand-soft text-brand">{icon}</div>}
       <p className="font-medium">{title}</p>
       {children && <div className="mt-1 max-w-md text-sm text-subtle">{children}</div>}
       {action && <div className="mt-4">{action}</div>}
@@ -151,6 +158,22 @@ export function Tabs<T extends string>({ tabs, value, onChange }: { tabs: { id: 
           {t.label}{t.count !== undefined && t.count !== null && <span className="ml-1.5 rounded-full bg-muted px-1.5 text-xs text-subtle">{t.count}</span>}
         </button>
       ))}
+    </div>
+  );
+}
+
+export function ScoreRing({ value, size = 52 }: { value: number; size?: number }) {
+  const r = (size - 6) / 2;
+  const c = 2 * Math.PI * r;
+  const pct = Math.max(0, Math.min(100, value)) / 100;
+  const color = value >= 70 ? "rgb(var(--ok))" : value >= 45 ? "rgb(var(--brand))" : "rgb(var(--subtle))";
+  return (
+    <div className="relative shrink-0" style={{ width: size, height: size }} role="img" aria-label={`Score ${value} out of 100`}>
+      <svg width={size} height={size} className="-rotate-90">
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="rgb(var(--muted))" strokeWidth={5} />
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={color} strokeWidth={5} strokeLinecap="round" strokeDasharray={c} strokeDashoffset={c * (1 - pct)} />
+      </svg>
+      <span className="absolute inset-0 flex items-center justify-center text-sm font-semibold tabular-nums">{value}</span>
     </div>
   );
 }

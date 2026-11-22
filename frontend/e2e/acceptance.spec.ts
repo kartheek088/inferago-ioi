@@ -86,6 +86,8 @@ test("first run → discovery → prospect → outreach → reply → pipeline �
   await expect(deal.getByText("Payment recorded")).toBeVisible();
   await deal.getByRole("button", { name: "Close" }).click();
   await expect(page.getByRole("region", { name: "Advance Received" }).getByText("E2E Test Biomedical Services")).toBeVisible();
+  await page.getByRole("button", { name: /^Advance Received · 1/ }).click();
+  await page.waitForTimeout(600);
   await page.screenshot({ path: "e2e/screens/pipeline.png" });
 
   // 10. Home shows the actual collected revenue
@@ -101,5 +103,6 @@ test("first run → discovery → prospect → outreach → reply → pipeline �
   await page.setViewportSize({ width: 390, height: 844 });
   await page.getByRole("navigation", { name: "Main mobile" }).getByRole("link", { name: "Prospects" }).click();
   await page.getByRole("button", { name: "Toggle dark mode" }).first().click();
+  await page.waitForTimeout(500);
   await page.screenshot({ path: "e2e/screens/mobile-dark-prospects.png", fullPage: false });
 });
