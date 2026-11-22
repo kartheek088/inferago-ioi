@@ -13,6 +13,7 @@ os.environ["IOI_API_TOKEN"] = ""
 os.environ["IOI_SCHEDULER_ENABLED"] = "false"
 # Legacy tests exercise nationwide discovery; Chennai-only scope tests switch it on explicitly (chennai_scope fixture).
 os.environ["IOI_DISCOVERY_SCOPE"] = "all"
+os.environ["IOI_IOI3_WORKER"] = "false"  # tests run discovery jobs synchronously via engine.run_next
 os.environ["IOI_OPENROUTER_API_KEY"] = ""
 os.environ["IOI_REDDIT_CLIENT_ID"] = ""
 

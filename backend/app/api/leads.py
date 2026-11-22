@@ -16,7 +16,7 @@ from sqlalchemy import String, and_, cast, exists, func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from app import jobs, leads, lead_rules
-from app.api.deps import DB, Paging, actor, paginate
+from app.api.deps import DB, NATIONWIDE, Paging, actor, paginate
 from app.config import BACKEND_DIR, get_settings
 from app.db import utcnow
 from app.models import ChennaiLead, LeadSignal, ProspectRun
@@ -288,7 +288,7 @@ def runs(db: Session = DB):
 
 
 # --- Pipeline runs (manual, bounded) -------------------------------------------------------------
-@router.post("/leads/collect", response_model=RunOut, status_code=202)
+@router.post("/leads/collect", response_model=RunOut, status_code=202, dependencies=NATIONWIDE)
 def collect(body: RunIn, db: Session = DB, who: str = Depends(actor)):
     f = overture_file()
     if not f:
@@ -300,7 +300,7 @@ def collect(body: RunIn, db: Session = DB, who: str = Depends(actor)):
     return run
 
 
-@router.post("/leads/research", response_model=RunOut, status_code=202)
+@router.post("/leads/research", response_model=RunOut, status_code=202, dependencies=NATIONWIDE)
 def research(body: RunIn, db: Session = DB, who: str = Depends(actor)):
     run = _start_run(db, f"check top {body.limit} websites")
     log_activity(db, "leads", None, "research_started", {"limit": body.limit}, who)
@@ -309,7 +309,7 @@ def research(body: RunIn, db: Session = DB, who: str = Depends(actor)):
     return run
 
 
-@router.post("/leads/news", response_model=RunOut, status_code=202)
+@router.post("/leads/news", response_model=RunOut, status_code=202, dependencies=NATIONWIDE)
 def news(db: Session = DB, who: str = Depends(actor)):
     run = _start_run(db, "news")
     log_activity(db, "leads", None, "news_scan_started", {}, who)

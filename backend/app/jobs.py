@@ -341,6 +341,33 @@ def _scheduled_lead_news() -> None:
     _run_leads(run_id, "news", {})
 
 
+def _scheduled_ioi3_discovery() -> None:
+    from app.ioi3 import core, engine
+
+    with SessionLocal() as db:
+        camp = core.active_campaign(db)
+        try:
+            engine.start_job(db, camp, trigger="scheduled")
+        except (engine.JobConflict, engine.ConfigError) as exc:
+            log.info("Scheduled discovery skipped: %s", exc)
+
+
+def sync_ioi3_schedule() -> str:
+    """Register the IOI 3.0 discovery schedule (Settings → Discovery → Schedule). Returns the schedule."""
+    from app.ioi3 import core
+
+    if _scheduler is None:
+        return "off"
+    with SessionLocal() as db:
+        sched = core.campaign_settings(core.active_campaign(db)).get("schedule", "off")
+    if _scheduler.get_job("ioi3_discovery"):
+        _scheduler.remove_job("ioi3_discovery")
+    if sched in ("daily", "weekly"):
+        _scheduler.add_job(_scheduled_ioi3_discovery, "interval", days=1 if sched == "daily" else 7, id="ioi3_discovery",
+                           replace_existing=True, max_instances=1, coalesce=True, misfire_grace_time=3600)
+    return sched
+
+
 def sync_schedule() -> list[str]:
     """(Re)register per-source interval jobs. Returns the scheduled source keys."""
     if _scheduler is None:
@@ -373,10 +400,10 @@ def start() -> None:
         _scheduler.start()
         keys = sync_schedule()
         if get_settings().chennai_only:
-            # Only read-only Chennai news scanning (matched to existing leads). No collection, no outreach.
-            _scheduler.add_job(_scheduled_lead_news, "interval", hours=12, id="chennai_lead_news", replace_existing=True,
-                               max_instances=1, coalesce=True, misfire_grace_time=3600)
-            log.info("Scheduler started in Chennai-only scope (nationwide jobs disabled)")
+            # IOI 3.0: legacy ingestion (incl. the v2.5 Chennai lead news job) is off. Only the optional
+            # IOI 3.0 discovery schedule chosen in Settings runs.
+            sync_ioi3_schedule()
+            log.info("Scheduler started in IOI 3.0 Chennai mode (legacy jobs disabled)")
             return
         _scheduler.add_job(_scheduled_big_projects, "interval", hours=12, id="big_projects", replace_existing=True,
                            max_instances=1, coalesce=True, misfire_grace_time=3600)

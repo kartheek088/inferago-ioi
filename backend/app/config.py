@@ -34,6 +34,8 @@ class Settings(BaseSettings):
     # runs; all-India / worldwide discovery (prospect scans, multi-branch, India-wide news, job-board
     # connectors) is refused and never scheduled. "all" restores the old behaviour.
     discovery_scope: str = "chennai"
+    # IOI 3.0 background discovery worker (tests turn it off and drive jobs directly).
+    ioi3_worker: bool = True
 
     @property
     def chennai_only(self) -> bool:

@@ -1,6 +1,6 @@
 # Build status
 
-_Last updated: 2026-11-23_
+_Last updated: 2026-11-23 (IOI 3.0)_
 
 ## Verification (all run locally)
 
@@ -18,7 +18,41 @@ _Last updated: 2026-11-23_
 
 `scripts/test.sh` runs the full suite.
 
-## Implemented
+## IOI 3.0 rebuild (2026-11-23)
+
+- **Preservation.** Tags `v2-final` (before Chennai refocus) and `v2.5-chennai`; branch `ioi-3.0`. Verified backups in
+  `backend/data/backups/` (ioi-20261123-002816.db with CSV exports, ioi-20261123-010638.db). Only one human-touched legacy
+  record existed (a template outreach draft); no legacy record had contact history or manual notes.
+- **Data.** No deletion: 3.0 uses new `ioi_*` tables (migration 0011, additive) and its campaign started at zero.
+  Legacy data (~360k rows incl. 1,071 v2.5 Chennai leads) is a read-only archive with CSV export. Old ingestion
+  (v2.5 scheduled news job, legacy collect/research/news and all-India endpoints) is switched off.
+- **Engine.** One-click Start Discovery; persistent jobs with 6 user-facing stages, real counters, per-source status,
+  log, stop (graceful), retry (failed/interrupted runs or failed sources), restart → interrupted (never auto-resumed),
+  no duplicate active job per campaign. Optional daily/weekly schedule.
+- **Sources.** Working: Overture places (local file), official websites, news RSS, CSV import, manual add. AI optional
+  (Deep only, quote-verified, per-run limit). Not automated by design: Google Maps, LinkedIn, JustDial, IndiaMART.
+- **Qualification.** 6 gates; P0 (confirmed need) / P1 (recent trigger) / P2 / P3; deterministic 100-point score in
+  7 parts; separate sales friction; solution hierarchy with ServiceFlow / OrderFlow / Integration Fix / Small Automation.
+- **Sales workspace.** Approval (gates required; editing resets approval), outreach log, replies (buyer-confirmed problems
+  become facts), follow-ups, 11-stage pipeline + 4 outcomes, proposals, payments; potential / quoted / contracted /
+  collected kept separate.
+- **UI.** New React + Tailwind app: Home, Discover, Prospects (+ detail), Outreach, Sales Pipeline, Settings, first-run
+  wizard; light default + dark mode; mobile bottom navigation.
+- **Run.** `./start.sh` / `./stop.sh` verified on Linux (fresh start, already-running detection, stop). `start.ps1` /
+  `stop.ps1` written but not run on Windows.
+- **Tests.** Backend: legacy suite + `tests/test_ioi3.py` (ingestion, dedupe, gates, categories, score, friction,
+  solution, research evidence states, engine lifecycle, approval guard, payments/revenue, campaign reset, API E2E).
+  Frontend: Vitest (12) + Playwright acceptance test (first run → real Quick discovery on the Overture file → research
+  → approve → contact → reply → proposal → payment) on a separate server and throwaway database.
+
+### Known limitations (3.0)
+- News RSS rarely names small Chennai firms, so most buying signals will come from the owner adding what they find.
+- The other-industry "manual-review inbox" for explicit tech requests from other sectors is not built.
+- No Tamil-language interface yet.
+- Website checks read ≤4 pages (≤7 in Deep); absence of evidence there is treated as unknown, not negative.
+- Single shared access token; no per-user accounts.
+
+## Implemented (v1–v2.5)
 
 - **Chennai-only lead intelligence (2026-11-23, owner brief).** IOI is refocused on two industries in Chennai city:
   wholesale distributors, and equipment sales companies that also do installation/repair/AMC.

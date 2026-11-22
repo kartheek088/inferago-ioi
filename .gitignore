@@ -25,3 +25,6 @@ frontend/dist/
 *.xls
 *.xlsx
 *.csv
+frontend/e2e/screens/
+frontend/test-results/
+frontend/playwright-report/

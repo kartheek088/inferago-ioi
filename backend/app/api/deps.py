@@ -86,8 +86,8 @@ def require_nationwide_scope() -> None:
     if get_settings().chennai_only:
         raise HTTPException(
             status_code=409,
-            detail="Nationwide discovery is turned off: IOI is in Chennai-only mode (IOI_DISCOVERY_SCOPE=chennai). "
-                   "Use Chennai leads instead.",
+            detail="This older discovery tool is turned off: IOI 3.0 runs in Chennai-only mode (IOI_DISCOVERY_SCOPE=chennai). "
+                   "Use Discover instead.",
         )
 
 

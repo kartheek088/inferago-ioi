@@ -803,3 +803,7 @@ class LeadSignal(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
     lead: Mapped[ChennaiLead | None] = relationship(back_populates="signals")
+
+
+# IOI 3.0 tables register on the same metadata (Alembic autogenerate, tests).
+from app.ioi3 import models as _ioi3_models  # noqa: E402,F401

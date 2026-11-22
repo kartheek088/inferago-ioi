@@ -13,6 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app import jobs
 from app.api import big_projects, chains, core, leads, opportunities, outreach, prospects, sources
 from app.api.deps import require_auth
+from app.ioi3.api import router as ioi3_router
 from app.config import get_settings
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -24,14 +25,22 @@ async def lifespan(_: FastAPI):
     from app.db import SessionLocal
     from app.source_registry import seed_sources
 
+    from app.ioi3 import core as ioi3_core
+    from app.ioi3 import engine as ioi3_engine
+
     with SessionLocal() as db:
         seed_sources(db)
         seed_default_actions(db)
         _recover_prospect_runs(db)
+        ioi3_core.seed_sources(db)
+        ioi3_core.active_campaign(db)
+        ioi3_engine.recover(db)
+    ioi3_engine.start_worker()
     jobs.start()
     try:
         yield
     finally:
+        ioi3_engine.stop_worker()
         jobs.shutdown()
 
 
@@ -92,7 +101,7 @@ def create_app() -> FastAPI:
     )
     app.include_router(core.public, prefix="/api")
     protected = [Depends(require_auth)]
-    for r in (core.router, leads.router, sources.router, opportunities.router, outreach.router, prospects.router, big_projects.router, chains.router):
+    for r in (ioi3_router, core.router, leads.router, sources.router, opportunities.router, outreach.router, prospects.router, big_projects.router, chains.router):
         app.include_router(r, prefix="/api", dependencies=protected)
     _mount_frontend(app)
     return app

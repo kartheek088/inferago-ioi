@@ -47,7 +47,8 @@ _EQUIP_NAME = re.compile(
 
 # Sectors outside both target industries even when names look similar.
 _EXCLUDE = re.compile(
-    r"laboratory_testing|it_service|computer_repair|software|web_design|mobile_phone_repair|automotive_repair|motorcycle_repair|"
+    r"laboratory_testing|oncology|surgery_center|surgeon|doctor|physician|dentist|dental_clinic|medical_center|diagnostic_center|"
+    r"pediatric|orthop|gynecolog|cardiolog|dermatolog|it_service|computer_repair|software|web_design|mobile_phone_repair|automotive_repair|motorcycle_repair|"
     r"bike_repair|tire_dealer|car_dealer|motorcycle_dealer|appliance_repair|beauty|salon|restaurant(?!_equipment)|"
     r"hospital(?!_equipment)|clinic|pharmacy|chemist|school|college|bank(?!_equipment)|real_estate|hotel|"
     r"government|religio|temple|church|mosque|jewel|clothing|apparel|textile_store|footwear|grocery_store|"
@@ -89,6 +90,8 @@ def classify_industry(name: str | None, category: str | None = None, page_text: 
     reasons: list[str] = []
     if cat and _EXCLUDE.search(cat):
         return IndustryVerdict(None, "none", None, [f"Directory category '{cat}' is outside the two target industries"])
+    if re.match(r"\s*dr\.?\s", name, re.I) or re.search(r"\b(surgeon|clinic|hospital|doctor)\b", name, re.I) and not _EQUIP_NAME.search(name):
+        return IndustryVerdict(None, "none", None, ["Name indicates a medical practice, not an equipment business"])
 
     w_hit = bool(cat and _WHOLESALE_CAT.search(cat) and not _WHOLESALE_CAT_EXCLUDE.search(cat)) or bool(_WHOLESALE_NAME.search(name))
     e_hit = bool(cat and _EQUIP_CAT.search(cat)) or bool(_EQUIP_NAME.search(name))

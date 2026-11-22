@@ -1,301 +1,168 @@
-import { ReactNode, useCallback, useEffect, useRef, useState } from "react";
-import { Link } from "react-router-dom";
-import { ApiError, setToken } from "../api";
-import type { Score } from "../types";
+import { forwardRef, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes, type TextareaHTMLAttributes, useEffect } from "react";
+import { AlertTriangle, CheckCircle2, ExternalLink, Loader2, X } from "lucide-react";
+import { cn, type Tone } from "../lib/format";
 
-// ---------------------------------------------------------------------------------------------
-// Data hook
-// ---------------------------------------------------------------------------------------------
+type Variant = "primary" | "secondary" | "ghost" | "danger" | "success";
+const VARIANT: Record<Variant, string> = {
+  primary: "bg-brand text-brand-fg hover:bg-brand/90 shadow-sm",
+  secondary: "bg-surface text-fg border border-border hover:bg-muted",
+  ghost: "text-subtle hover:bg-muted hover:text-fg",
+  danger: "bg-surface text-bad border border-border hover:bg-bad/10",
+  success: "bg-ok text-white hover:bg-ok/90 dark:text-black",
+};
 
-export function useApi<T>(fn: () => Promise<T>, deps: unknown[] = []) {
-  const [data, setData] = useState<T | undefined>();
-  const [error, setError] = useState<string | undefined>();
-  const [loading, setLoading] = useState(true);
-  const seq = useRef(0);
-  const load = useCallback(() => {
-    const id = ++seq.current;
-    setLoading(true);
-    fn()
-      .then((d) => {
-        if (id === seq.current) {
-          setData(d);
-          setError(undefined);
-        }
-      })
-      .catch((e: unknown) => {
-        if (id === seq.current) setError(e instanceof ApiError ? `${e.status}: ${e.message}` : String(e));
-      })
-      .finally(() => id === seq.current && setLoading(false));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, deps);
-  useEffect(load, [load]);
-  return { data, error, loading, reload: load, setData };
-}
-
-export function useAction() {
-  const [busy, setBusy] = useState(false);
-  const [msg, setMsg] = useState<{ kind: "ok" | "err"; text: string } | undefined>();
-  const run = async <T,>(fn: () => Promise<T>, ok?: string): Promise<T | undefined> => {
-    setBusy(true);
-    setMsg(undefined);
-    try {
-      const r = await fn();
-      if (ok) setMsg({ kind: "ok", text: ok });
-      return r;
-    } catch (e) {
-      setMsg({ kind: "err", text: e instanceof ApiError ? e.message : String(e) });
-      return undefined;
-    } finally {
-      setBusy(false);
-    }
-  };
-  return { busy, msg, run, setMsg };
-}
-
-// ---------------------------------------------------------------------------------------------
-// Layout primitives
-// ---------------------------------------------------------------------------------------------
-
-export function PageHeader({ title, subtitle, actions }: { title: string; subtitle?: ReactNode; actions?: ReactNode }) {
-  return (
-    <header className="page-header">
-      <div>
-        <h1>{title}</h1>
-        {subtitle && <p className="muted">{subtitle}</p>}
-      </div>
-      {actions && <div className="row gap">{actions}</div>}
-    </header>
-  );
-}
-
-export function Card({ title, children, actions, className }: { title?: ReactNode; children: ReactNode; actions?: ReactNode; className?: string }) {
-  return (
-    <section className={`card ${className ?? ""}`}>
-      {(title || actions) && (
-        <div className="card-head">
-          {title && <h2>{title}</h2>}
-          {actions}
-        </div>
-      )}
+export const Button = forwardRef<HTMLButtonElement, ButtonHTMLAttributes<HTMLButtonElement> & { variant?: Variant; size?: "sm" | "md" | "lg"; loading?: boolean }>(
+  ({ className, variant = "secondary", size = "md", loading, disabled, children, ...p }, ref) => (
+    <button ref={ref} disabled={disabled || loading}
+      className={cn("inline-flex items-center justify-center gap-2 rounded-lg font-medium transition-colors disabled:opacity-50 disabled:pointer-events-none whitespace-nowrap",
+        size === "sm" ? "h-8 px-3 text-sm" : size === "lg" ? "h-12 px-6 text-base" : "h-10 px-4 text-sm", VARIANT[variant], className)} {...p}>
+      {loading && <Loader2 className="h-4 w-4 animate-spin" aria-hidden />}
       {children}
+    </button>
+  ));
+Button.displayName = "Button";
+
+export function Card({ className, children, title, action, description }: { className?: string; children: ReactNode; title?: ReactNode; action?: ReactNode; description?: ReactNode }) {
+  return (
+    <section className={cn("rounded-xl border border-border bg-surface shadow-sm", className)}>
+      {(title || action) && (
+        <header className="flex items-start justify-between gap-3 px-5 pt-5">
+          <div>
+            {title && <h2 className="text-base font-semibold">{title}</h2>}
+            {description && <p className="mt-0.5 text-sm text-subtle">{description}</p>}
+          </div>
+          {action}
+        </header>
+      )}
+      <div className="p-5">{children}</div>
     </section>
   );
 }
 
-export function Loading() {
-  return <div className="muted pad">Loading…</div>;
+const TONE: Record<Tone, string> = {
+  ok: "bg-ok/10 text-ok border-ok/20", warn: "bg-warn/10 text-warn border-warn/25", bad: "bg-bad/10 text-bad border-bad/20",
+  info: "bg-info/10 text-info border-info/20", neutral: "bg-muted text-subtle border-border", brand: "bg-brand-soft text-brand border-brand/20",
+};
+export function Badge({ tone = "neutral", children, className, title }: { tone?: Tone; children: ReactNode; className?: string; title?: string }) {
+  return <span title={title} className={cn("inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium", TONE[tone], className)}>{children}</span>;
 }
 
-function TokenPrompt() {
-  const [tok, setTok] = useState("");
+export const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputElement>>(({ className, ...p }, ref) => (
+  <input ref={ref} className={cn("h-10 w-full rounded-lg border border-border bg-surface px-3 text-sm placeholder:text-subtle/70 focus:border-brand focus:outline-none", className)} {...p} />
+));
+Input.displayName = "Input";
+export const Textarea = forwardRef<HTMLTextAreaElement, TextareaHTMLAttributes<HTMLTextAreaElement>>(({ className, ...p }, ref) => (
+  <textarea ref={ref} className={cn("w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm placeholder:text-subtle/70 focus:border-brand focus:outline-none", className)} {...p} />
+));
+Textarea.displayName = "Textarea";
+export function Select({ className, children, ...p }: SelectHTMLAttributes<HTMLSelectElement>) {
+  return <select className={cn("h-10 rounded-lg border border-border bg-surface px-3 text-sm focus:border-brand focus:outline-none", className)} {...p}>{children}</select>;
+}
+export function Field({ label, hint, children }: { label: string; hint?: ReactNode; children: ReactNode }) {
   return (
-    <div className="alert warn">
-      <span>This device is not signed in. Open your private link (run <code>scripts/public-tunnel.sh link</code> on the laptop) or paste the API token:</span>
-      <input type="password" value={tok} onChange={(e) => setTok(e.target.value)} placeholder="API token" style={{ maxWidth: 260 }} />
-      <button className="btn sm primary" disabled={!tok.trim()} onClick={() => { setToken(tok.trim()); window.location.reload(); }}>Sign in</button>
+    <label className="block space-y-1.5">
+      <span className="text-sm font-medium">{label}</span>
+      {children}
+      {hint && <span className="block text-xs text-subtle">{hint}</span>}
+    </label>
+  );
+}
+
+export function Stat({ label, value, hint, icon }: { label: string; value: ReactNode; hint?: ReactNode; icon?: ReactNode }) {
+  return (
+    <div className="rounded-xl border border-border bg-surface p-4 shadow-sm">
+      <div className="flex items-center justify-between text-sm text-subtle">{label}{icon}</div>
+      <div className="mt-2 text-2xl font-semibold tabular-nums">{value}</div>
+      {hint && <div className="mt-1 text-xs text-subtle">{hint}</div>}
     </div>
   );
 }
 
-export function ErrorBox({ error, onRetry }: { error?: string; onRetry?: () => void }) {
-  if (!error) return null;
-  if (error.startsWith("401")) return <TokenPrompt />;
+export function Empty({ icon, title, children, action }: { icon?: ReactNode; title: string; children?: ReactNode; action?: ReactNode }) {
   return (
-    <div className="alert err">
-      <span>{error}</span>
-      {onRetry && (
-        <button className="btn sm" onClick={onRetry}>
-          Retry
-        </button>
-      )}
+    <div className="flex flex-col items-center rounded-xl border border-dashed border-border px-6 py-10 text-center">
+      {icon && <div className="mb-3 text-subtle">{icon}</div>}
+      <p className="font-medium">{title}</p>
+      {children && <div className="mt-1 max-w-md text-sm text-subtle">{children}</div>}
+      {action && <div className="mt-4">{action}</div>}
     </div>
   );
+}
+
+export function Spinner({ label = "Loading…" }: { label?: string }) {
+  return <div className="flex items-center gap-2 py-8 text-sm text-subtle" role="status"><Loader2 className="h-4 w-4 animate-spin" />{label}</div>;
+}
+
+export function Notice({ kind = "info", children }: { kind?: "info" | "ok" | "err" | "warn"; children: ReactNode }) {
+  const cls = { info: "border-info/25 bg-info/5", ok: "border-ok/25 bg-ok/5", err: "border-bad/25 bg-bad/5 text-bad", warn: "border-warn/30 bg-warn/5" }[kind];
+  const Icon = kind === "ok" ? CheckCircle2 : AlertTriangle;
+  return <div role={kind === "err" ? "alert" : "status"} className={cn("flex items-start gap-2 rounded-lg border px-3 py-2 text-sm", cls)}>{kind !== "info" && <Icon className="mt-0.5 h-4 w-4 shrink-0" />}<div>{children}</div></div>;
 }
 
 export function Msg({ msg }: { msg?: { kind: "ok" | "err"; text: string } }) {
-  if (!msg) return null;
-  return <div className={`alert ${msg.kind}`}>{msg.text}</div>;
+  return msg ? <Notice kind={msg.kind}>{msg.text}</Notice> : null;
 }
 
-export function Empty({ children }: { children: ReactNode }) {
-  return <div className="empty">{children}</div>;
-}
-
-export function Pager({ total, limit, offset, onChange }: { total: number; limit: number; offset: number; onChange: (o: number) => void }) {
-  if (total <= limit) return <div className="muted small pad-t">{total} item(s)</div>;
+export function ErrorState({ error, onRetry }: { error?: { message: string; status?: number }; onRetry?: () => void }) {
+  if (!error) return null;
   return (
-    <div className="row gap pad-t small">
-      <button className="btn sm" disabled={offset === 0} onClick={() => onChange(Math.max(0, offset - limit))}>
-        ← Prev
-      </button>
-      <span className="muted">
-        {offset + 1}–{Math.min(total, offset + limit)} of {total}
-      </span>
-      <button className="btn sm" disabled={offset + limit >= total} onClick={() => onChange(offset + limit)}>
-        Next →
-      </button>
+    <Notice kind="err">
+      {error.message} {onRetry && <button className="ml-2 font-medium underline" onClick={onRetry}>Try again</button>}
+    </Notice>
+  );
+}
+
+export function Ext({ href, children, className }: { href: string | null | undefined; children?: ReactNode; className?: string }) {
+  if (!href) return <span className="text-subtle">no link</span>;
+  let label: ReactNode = children;
+  if (!label) { try { label = new URL(href).hostname.replace(/^www\./, ""); } catch { label = href; } }
+  return <a href={href} target="_blank" rel="noopener noreferrer" className={cn("inline-flex items-center gap-1 break-all", className)}>{label}<ExternalLink className="h-3 w-3 shrink-0" aria-hidden /></a>;
+}
+
+export function Modal({ open, onClose, title, children, footer }: { open: boolean; onClose: () => void; title: string; children: ReactNode; footer?: ReactNode }) {
+  useEffect(() => {
+    if (!open) return;
+    const k = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    window.addEventListener("keydown", k);
+    return () => window.removeEventListener("keydown", k);
+  }, [open, onClose]);
+  if (!open) return null;
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-4" onClick={onClose}>
+      <div role="dialog" aria-modal="true" aria-label={title} className="max-h-[92vh] w-full overflow-auto rounded-t-2xl bg-surface shadow-xl sm:max-w-lg sm:rounded-2xl" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between border-b border-border px-5 py-4">
+          <h3 className="font-semibold">{title}</h3>
+          <button onClick={onClose} className="rounded p-1 text-subtle hover:bg-muted" aria-label="Close"><X className="h-4 w-4" /></button>
+        </div>
+        <div className="space-y-4 p-5">{children}</div>
+        {footer && <div className="flex justify-end gap-2 border-t border-border px-5 py-3">{footer}</div>}
+      </div>
     </div>
   );
 }
 
-export function Tabs<T extends string>({ tabs, value, onChange }: { tabs: { id: T; label: string }[]; value: T; onChange: (t: T) => void }) {
+export function Tabs<T extends string>({ tabs, value, onChange }: { tabs: { id: T; label: string; count?: number | null }[]; value: T; onChange: (t: T) => void }) {
   return (
-    <div className="tabs" role="tablist">
+    <div role="tablist" className="flex gap-1 overflow-x-auto border-b border-border">
       {tabs.map((t) => (
-        <button key={t.id} role="tab" aria-selected={value === t.id} className={value === t.id ? "tab active" : "tab"} onClick={() => onChange(t.id)}>
-          {t.label}
+        <button key={t.id} role="tab" aria-selected={value === t.id} onClick={() => onChange(t.id)}
+          className={cn("-mb-px whitespace-nowrap border-b-2 px-3 py-2 text-sm font-medium transition-colors",
+            value === t.id ? "border-brand text-fg" : "border-transparent text-subtle hover:text-fg")}>
+          {t.label}{t.count !== undefined && t.count !== null && <span className="ml-1.5 rounded-full bg-muted px-1.5 text-xs text-subtle">{t.count}</span>}
         </button>
       ))}
     </div>
   );
 }
 
-// ---------------------------------------------------------------------------------------------
-// Domain badges
-// ---------------------------------------------------------------------------------------------
-
-const ELIG_LABEL: Record<string, string> = {
-  eligible: "Eligible",
-  eligible_with_clarifications: "Eligible (clarify)",
-  insufficient_information: "Insufficient info",
-  potentially_eligible: "Potentially eligible",
-  not_eligible: "Not eligible",
-  partner_route: "Partner route",
-  unclear: "Unclear",
-  unknown: "Unknown",
-};
-const ELIG_TONE: Record<string, string> = {
-  eligible: "good",
-  eligible_with_clarifications: "info",
-  potentially_eligible: "info",
-  not_eligible: "bad",
-  partner_route: "warn",
-  unclear: "neutral",
-  unknown: "neutral",
-};
-
-export function EligibilityBadge({ outcome }: { outcome: string | null }) {
-  const o = outcome ?? "unknown";
-  return <span className={`badge ${ELIG_TONE[o] ?? "neutral"}`}>{ELIG_LABEL[o] ?? o}</span>;
-}
-
-export const PIPELINE_LABEL: Record<string, string> = { A_direct: "A · Direct", B_vendor: "B · Vendor", C_chain: "C · Chain", none: "—" };
-
-export function PipelineBadge({ pipeline }: { pipeline: string }) {
-  return <span className={`badge pipe-${pipeline}`}>{PIPELINE_LABEL[pipeline] ?? pipeline}</span>;
-}
-
-export function StatusBadge({ status }: { status: string }) {
-  const tone: Record<string, string> = {
-    success: "good", done: "good", approved: "good", confirmed: "good", live: "good", sent_manually: "good", qualified: "good",
-    failed: "bad", rejected: "bad", not_eligible: "bad",
-    partial: "warn", pending_approval: "warn", needs_manual_review: "warn", credential_gated: "warn", hypothesis: "warn", skipped: "warn",
-    running: "info", in_progress: "info", researching: "info", outreach: "info", shortlisted: "info", manual: "info",
-  };
-  return <span className={`badge ${tone[status] ?? "neutral"}`}>{status.replace(/_/g, " ")}</span>;
-}
-
-export function DemoBadge({ show }: { show: boolean }) {
-  return show ? <span className="badge demo" title="Demonstration fixture — not a real lead">DEMO</span> : null;
-}
-
-export function Geo({ country, region }: { country: string | null; region: string | null }) {
-  if (!country) return <span className="muted" title="Geography not stated in the evidence">Unknown</span>;
+export function PageHeader({ title, description, actions }: { title: string; description?: ReactNode; actions?: ReactNode }) {
   return (
-    <span>
-      {region ? `${region}, ` : ""}
-      {country}
-    </span>
-  );
-}
-
-export const SCORE_LABEL: Record<string, string> = { direct_client: "Direct", vendor_subcontracting: "Vendor", chain_potential: "Chain" };
-
-export function ScorePills({ scores }: { scores: Score[] }) {
-  const order = ["direct_client", "vendor_subcontracting", "chain_potential"];
-  return (
-    <span className="row gap-s">
-      {order.map((t) => {
-        const s = scores.find((x) => x.score_type === t);
-        if (!s) return null;
-        return (
-          <span key={t} className={`pill ${s.disqualified ? "dq" : ""}`} title={s.explanation}>
-            {SCORE_LABEL[t]} {s.disqualified ? "DQ" : Math.round(s.effective_total)}
-          </span>
-        );
-      })}
-    </span>
-  );
-}
-
-export function ScoreBreakdown({ score }: { score: Score }) {
-  return (
-    <div className="score-card">
-      <div className="row between">
-        <strong>{SCORE_LABEL[score.score_type]} score</strong>
-        <span className={`big-num ${score.disqualified ? "bad-text" : ""}`}>
-          {score.effective_total}
-          <span className="muted small">/100</span>
-        </span>
+    <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+      <div>
+        <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
+        {description && <p className="mt-1 text-sm text-subtle">{description}</p>}
       </div>
-      {score.disqualified && <div className="alert err small">Disqualified by a mandatory eligibility failure (raw score {score.raw_total}).</div>}
-      <ul className="components">
-        {score.components.map((c) => (
-          <li key={c.name}>
-            <div className="row between small">
-              <span>
-                {c.name.replace(/_/g, " ")} {!c.known && <span className="badge neutral xs" title="No data — scored 0 but not a negative finding">unknown</span>}
-              </span>
-              <span className="mono">
-                {c.value}/{c.max}
-              </span>
-            </div>
-            <div className="bar">
-              <div className={`fill ${c.known ? "" : "unknown"}`} style={{ width: `${(c.value / c.max) * 100}%` }} />
-            </div>
-            <div className="muted xs">{c.explanation}</div>
-          </li>
-        ))}
-      </ul>
+      {actions && <div className="flex flex-wrap gap-2">{actions}</div>}
     </div>
-  );
-}
-
-export function fmtDate(s: string | null | undefined, withTime = false): string {
-  if (!s) return "—";
-  const d = new Date(s.endsWith("Z") || s.includes("+") ? s : `${s}Z`);
-  if (Number.isNaN(d.getTime())) return s;
-  return withTime ? d.toLocaleString() : d.toLocaleDateString();
-}
-
-export function ExtLink({ href, children }: { href: string | null | undefined; children?: ReactNode }) {
-  if (!href) return <span className="muted">—</span>;
-  const safe = /^https?:\/\//i.test(href);
-  if (!safe) return <span>{href}</span>;
-  return (
-    <a href={href} target="_blank" rel="noopener noreferrer nofollow">
-      {children ?? href}
-    </a>
-  );
-}
-
-export function OppLink({ id, title }: { id: number; title: string }) {
-  return <Link to={`/opportunities/${id}`}>{title}</Link>;
-}
-
-export function Kpi({ label, value, hint, to }: { label: string; value: ReactNode; hint?: string; to?: string }) {
-  const inner = (
-    <>
-      <div className="kpi-value">{value}</div>
-      <div className="kpi-label">{label}</div>
-      {hint && <div className="muted xs">{hint}</div>}
-    </>
-  );
-  return to ? (
-    <Link to={to} className="kpi">
-      {inner}
-    </Link>
-  ) : (
-    <div className="kpi">{inner}</div>
   );
 }

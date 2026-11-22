@@ -1,104 +1,126 @@
-import { useEffect, useState } from "react";
-import { Link, useSearchParams } from "react-router-dom";
-import { api, getActor } from "../api";
-import { Card, Empty, ErrorBox, ExtLink, Loading, Msg, PageHeader, StatusBadge, fmtDate, useAction, useApi } from "../components/ui";
-import type { Draft, Page } from "../types";
+import { useState } from "react";
+import { Link } from "react-router-dom";
+import { CalendarClock, Copy, KanbanSquare, MessageSquareReply, PhoneCall, Send } from "lucide-react";
+import { Badge, Button, Card, Empty, ErrorState, Ext, Field, Input, Modal, Msg, PageHeader, Select, Spinner, Textarea } from "../components/ui";
+import { api } from "../lib/api";
+import { useAction, useQuery } from "../lib/hooks";
+import { INDUSTRY, date } from "../lib/format";
+import type { CompanyCard, Outreach as OutreachT } from "../lib/types";
 
-interface Approval { id: number; decision: string; decided_by: string; note: string | null; decided_at: string }
+interface Item extends CompanyCard {
+  contacts: { kind: string; value: string; official: boolean; source_url: string }[];
+  outreach: OutreachT; last_activity: { kind: string; summary: string; at: string } | null; deal_stage: string | null;
+}
+type Dialog = { kind: "contacted" | "reply" | "follow"; item: Item } | null;
 
-function DraftEditor({ id, onChanged }: { id: number; onChanged: () => void }) {
-  const d = useApi(() => api.get<Draft>(`/outreach/drafts/${id}`), [id]);
-  const approvals = useApi(() => api.get<Page<Approval>>("/approvals", { draft_id: id }), [id]);
+export default function Outreach() {
+  const q = useQuery(() => api.get<Item[]>("/outreach"), []);
   const act = useAction();
-  const [subject, setSubject] = useState("");
-  const [body, setBody] = useState("");
-  const [opening, setOpening] = useState("");
-  const [approver, setApprover] = useState(getActor());
-  const [note, setNote] = useState("");
-  useEffect(() => {
-    if (d.data) { setSubject(d.data.email_subject); setBody(d.data.email_body); setOpening(d.data.call_opening); }
-  }, [d.data]);
-  const refresh = () => { d.reload(); approvals.reload(); onChanged(); };
-  const x = d.data;
-  if (!x) return d.error ? <ErrorBox error={d.error} /> : <Loading />;
-  const dirty = subject !== x.email_subject || body !== x.email_body || opening !== x.call_opening;
+  const [dlg, setDlg] = useState<Dialog>(null);
+  const [copied, setCopied] = useState<number | null>(null);
+  const copy = async (it: Item) => { await navigator.clipboard?.writeText(it.outreach.message); setCopied(it.id); setTimeout(() => setCopied(null), 1500); };
+  const toPipeline = async (it: Item) => { if (await act.run(() => api.post(`/companies/${it.id}/to-pipeline`), `${it.name} is in the Sales Pipeline`)) q.reload(); };
   return (
-    <Card title={<span className="row gap-s">Draft #{x.id} <StatusBadge status={x.status} /> <span className="muted small">by {x.generated_by}</span></span>}
-      actions={<Link to={`/opportunities/${x.opportunity_id}`}>Opportunity #{x.opportunity_id} →</Link>}>
-      <div className="alert info small">IOI never sends email, places calls, submits bids or registers as a vendor. After approval, send it yourself and click “Mark sent manually”.</div>
+    <>
+      <PageHeader title="Outreach" description="Businesses you approved. IOI never sends anything — copy the message, contact them yourself, then log what happened." />
+      <ErrorState error={q.error} onRetry={q.reload} />
       <Msg msg={act.msg} />
-      <div className="grid grid-2">
-        <div className="stack">
-          <label className="field">Email subject<input value={subject} onChange={(e) => setSubject(e.target.value)} /></label>
-          <label className="field">Email body<textarea rows={12} value={body} onChange={(e) => setBody(e.target.value)} /></label>
-          <label className="field">Call opening<textarea rows={3} value={opening} onChange={(e) => setOpening(e.target.value)} /></label>
-          <div className="row gap">
-            <button className="btn" disabled={!dirty || act.busy} onClick={async () => { if (await act.run(() => api.patch(`/outreach/drafts/${id}`, { email_subject: subject, email_body: body, call_opening: opening }), x.status === "approved" ? "Saved — approval invalidated, resubmit required" : "Saved")) refresh(); }}>Save edits</button>
-            {(x.status === "draft" || x.status === "rejected") && <button className="btn primary" disabled={dirty || act.busy} onClick={async () => { if (await act.run(() => api.post(`/outreach/drafts/${id}/submit`), "Submitted for approval")) refresh(); }}>Submit for approval</button>}
-            {x.status === "approved" && <button className="btn primary" disabled={act.busy} onClick={async () => { if (await act.run(() => api.post(`/outreach/drafts/${id}/mark-sent`), "Recorded as sent by you; follow-up created")) refresh(); }}>Mark sent manually</button>}
-          </div>
-          {x.status === "pending_approval" && (
-            <div className="card" style={{ marginTop: 12 }}>
-              <h3 style={{ marginTop: 0 }}>Human approval</h3>
-              <div className="filters">
-                <label className="field">Approver<input value={approver} onChange={(e) => setApprover(e.target.value)} /></label>
-                <label className="field" style={{ flex: 1 }}>Note<input value={note} onChange={(e) => setNote(e.target.value)} /></label>
-              </div>
-              <div className="row gap">
-                <button className="btn primary" disabled={!approver.trim() || act.busy} onClick={async () => { if (await act.run(() => api.post(`/outreach/drafts/${id}/decision`, { decision: "approved", decided_by: approver, note: note || null }), "Approved")) refresh(); }}>Approve</button>
-                <button className="btn danger" disabled={!approver.trim() || act.busy} onClick={async () => { if (await act.run(() => api.post(`/outreach/drafts/${id}/decision`, { decision: "rejected", decided_by: approver, note: note || null }), "Rejected")) refresh(); }}>Reject</button>
-              </div>
-            </div>
-          )}
-          {approvals.data && approvals.data.items.length > 0 && (
-            <div className="small">
-              <strong>Approval history</strong>
-              <ul>{approvals.data.items.map((a) => <li key={a.id}>{a.decision} by {a.decided_by} · {fmtDate(a.decided_at, true)}{a.note ? ` — ${a.note}` : ""}</li>)}</ul>
-            </div>
-          )}
+      {!q.data ? <Spinner /> : q.data.length === 0 ? (
+        <Empty icon={<Send className="h-6 w-6" />} title="No approved prospects yet" action={<Link to="/prospects"><Button variant="primary">Review prospects</Button></Link>}>
+          Open a prospect and click <strong>Approve for Outreach</strong> once you're happy with the message.
+        </Empty>
+      ) : (
+        <div className="space-y-4">
+          {q.data.map((it) => {
+            const due = it.next_follow_up_at && new Date(it.next_follow_up_at + "Z") <= new Date();
+            return (
+              <Card key={it.id}>
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <Link to={`/prospects/${it.id}`} className="text-base font-semibold text-fg">{it.name}</Link>
+                    <div className="mt-1 flex flex-wrap gap-1.5 text-xs">
+                      <Badge tone="brand">{INDUSTRY[it.industry ?? ""]}</Badge>
+                      {it.offer && <Badge>{it.offer}</Badge>}
+                      {it.deal_stage && <Badge tone="info">Pipeline: {it.deal_stage.replace(/_/g, " ")}</Badge>}
+                      {it.next_follow_up_at && <Badge tone={due ? "warn" : "neutral"}><CalendarClock className="h-3 w-3" />Follow up {date(it.next_follow_up_at)}</Badge>}
+                    </div>
+                  </div>
+                  <div className="text-right text-sm text-subtle">{it.last_activity ? <>{it.last_activity.summary}<br />{date(it.last_activity.at, true)}</> : "Not contacted yet"}</div>
+                </div>
+                <div className="mt-4 grid gap-4 lg:grid-cols-[1fr_18rem]">
+                  <div>
+                    <p className="mb-1 text-sm"><span className="font-medium">Contact: </span>{it.outreach.contact_role}</p>
+                    <pre className="whitespace-pre-wrap rounded-lg bg-muted p-3 font-sans text-sm">{it.outreach.message}</pre>
+                  </div>
+                  <div className="space-y-3 text-sm">
+                    <div>
+                      <p className="font-medium">Public contact routes</p>
+                      <ul className="mt-1 space-y-1">
+                        {it.contacts.map((x) => (
+                          <li key={x.value}>
+                            {x.kind === "phone" ? <a href={`tel:${x.value.replace(/\s/g, "")}`}>{x.value}</a> : x.kind === "email" ? <a href={`mailto:${x.value}`}>{x.value}</a> : <Ext href={x.value}>Contact form</Ext>}
+                            <span className="text-xs text-subtle"> · {x.official ? "their website" : "directory"}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                    {it.outreach.questions.length > 0 && <div><p className="font-medium">Ask them</p><ol className="mt-1 list-decimal pl-5 text-subtle">{it.outreach.questions.slice(0, 4).map((x) => <li key={x}>{x}</li>)}</ol></div>}
+                  </div>
+                </div>
+                <div className="mt-4 flex flex-wrap gap-2">
+                  <Button size="sm" onClick={() => copy(it)}><Copy className="h-4 w-4" />{copied === it.id ? "Copied" : "Copy message"}</Button>
+                  <Button size="sm" variant="primary" onClick={() => setDlg({ kind: "contacted", item: it })}><PhoneCall className="h-4 w-4" />Mark as contacted</Button>
+                  <Button size="sm" onClick={() => setDlg({ kind: "reply", item: it })}><MessageSquareReply className="h-4 w-4" />Record reply</Button>
+                  <Button size="sm" onClick={() => setDlg({ kind: "follow", item: it })}><CalendarClock className="h-4 w-4" />Schedule follow-up</Button>
+                  {!it.deal_stage && <Button size="sm" variant="ghost" onClick={() => toPipeline(it)}><KanbanSquare className="h-4 w-4" />Move to Sales Pipeline</Button>}
+                </div>
+              </Card>
+            );
+          })}
         </div>
-        <div className="stack small">
-          <div><strong>Company background</strong><div className="wrap">{x.company_background}</div></div>
-          <div><strong>Why shortlisted</strong><div className="wrap">{x.why_shortlisted}</div></div>
-          <div><strong>Buying signal</strong><div className="excerpt xs">{x.buying_signal}</div></div>
-          <div><strong>Relevant Inferago capability</strong><div>{x.relevant_capability}</div></div>
-          <div><strong>Contact route</strong><div className="wrap">{x.contact_route}</div></div>
-          <div><strong>Evidence</strong><ul>{x.evidence_links.map((l) => <li key={l} className="wrap"><ExtLink href={l} /></li>)}</ul></div>
-          <div><strong>Discovery questions</strong><ul>{x.discovery_questions.map((q, i) => <li key={i}>{q}</li>)}</ul></div>
-          <div><strong>Likely objections</strong><ul>{x.likely_objections.map((q, i) => <li key={i}>{q}</li>)}</ul></div>
-          <div><strong>Recommended next action</strong><div>{x.recommended_next_action}</div></div>
-        </div>
-      </div>
-    </Card>
+      )}
+      {dlg && <ActionDialog dlg={dlg} onClose={() => setDlg(null)} onDone={() => { setDlg(null); q.reload(); }} />}
+    </>
   );
 }
 
-export default function Outreach() {
-  const [params, setParams] = useSearchParams();
-  const [status, setStatus] = useState("");
-  const drafts = useApi(() => api.get<Page<Draft>>("/outreach/drafts", { status, limit: 100 }), [status]);
-  const selected = Number(params.get("draft") ?? 0);
+function ActionDialog({ dlg, onClose, onDone }: { dlg: NonNullable<Dialog>; onClose: () => void; onDone: () => void }) {
+  const act = useAction();
+  const [channel, setChannel] = useState("phone");
+  const [note, setNote] = useState("");
+  const [days, setDays] = useState(3);
+  const [interested, setInterested] = useState<string>("yes");
+  const [problem, setProblem] = useState("");
+  const [when, setWhen] = useState(() => new Date(Date.now() + 2 * 86400000).toISOString().slice(0, 10));
+  const id = dlg.item.id;
+  const submit = async () => {
+    const r = dlg.kind === "contacted"
+      ? await act.run(() => api.post(`/companies/${id}/contacted`, { channel, note: note || null, follow_up_days: days || null }))
+      : dlg.kind === "reply"
+        ? await act.run(() => api.post(`/companies/${id}/reply`, { summary: note, interested: interested === "yes" ? true : interested === "no" ? false : null, buyer_problem: problem || null }))
+        : await act.run(() => api.post(`/companies/${id}/follow-up`, { at: `${when}T09:00:00`, note: note || null }));
+    if (r) onDone();
+  };
+  const title = { contacted: "Mark as contacted", reply: "Record their reply", follow: "Schedule a follow-up" }[dlg.kind];
   return (
-    <>
-      <PageHeader title="Outreach" subtitle="Prepare, edit and approve outreach. All outbound communication requires explicit human approval." />
-      <div className="grid" style={{ gridTemplateColumns: "minmax(0, 320px) minmax(0, 1fr)" }}>
-        <Card title="Drafts" actions={
-          <select value={status} onChange={(e) => setStatus(e.target.value)} aria-label="Status">
-            <option value="">All</option>{["draft", "pending_approval", "approved", "rejected", "sent_manually"].map((s) => <option key={s} value={s}>{s.replace(/_/g, " ")}</option>)}
-          </select>}>
-          <ErrorBox error={drafts.error} />
-          {drafts.data?.items.length === 0 && <Empty>No drafts. Generate one from an opportunity's Outreach tab.</Empty>}
-          <ul className="list-plain">
-            {drafts.data?.items.map((d) => (
-              <li key={d.id}>
-                <a href="#" onClick={(e) => { e.preventDefault(); setParams({ draft: String(d.id) }); }} style={{ fontWeight: d.id === selected ? 700 : 400 }}>{d.email_subject}</a>
-                <div className="row gap-s xs"><StatusBadge status={d.status} /><span className="muted">{fmtDate(d.updated_at)}</span></div>
-              </li>
-            ))}
-          </ul>
-        </Card>
-        <div>{selected ? <DraftEditor key={selected} id={selected} onChanged={drafts.reload} /> : <Empty>Select a draft</Empty>}</div>
-      </div>
-    </>
+    <Modal open onClose={onClose} title={`${title} — ${dlg.item.name}`}
+      footer={<><Button variant="ghost" onClick={onClose}>Cancel</Button><Button variant="primary" loading={act.busy} disabled={dlg.kind === "reply" && note.length < 2} onClick={submit}>Save</Button></>}>
+      {dlg.kind === "contacted" && <>
+        <Field label="How did you contact them?"><Select className="w-full" value={channel} onChange={(e) => setChannel(e.target.value)}>
+          <option value="phone">Phone call</option><option value="whatsapp">WhatsApp</option><option value="email">Email</option><option value="in_person">In person</option><option value="other">Other</option>
+        </Select></Field>
+        <Field label="Follow up in (days)"><Input type="number" min={0} max={90} value={days} onChange={(e) => setDays(parseInt(e.target.value || "0", 10))} /></Field>
+      </>}
+      {dlg.kind === "reply" && <>
+        <Field label="Are they interested?"><Select className="w-full" value={interested} onChange={(e) => setInterested(e.target.value)}>
+          <option value="yes">Yes / want to talk</option><option value="unsure">Not sure yet</option><option value="no">Not interested</option>
+        </Select></Field>
+        <Field label="Problem they described (optional)" hint="Saved as a buyer-confirmed fact — only write what they actually said.">
+          <Input value={problem} onChange={(e) => setProblem(e.target.value)} placeholder="e.g. Service calls are tracked in a notebook" /></Field>
+      </>}
+      {dlg.kind === "follow" && <Field label="Follow up on"><Input type="date" value={when} onChange={(e) => setWhen(e.target.value)} /></Field>}
+      <Field label={dlg.kind === "reply" ? "What they said *" : "Note (optional)"}><Textarea rows={3} value={note} onChange={(e) => setNote(e.target.value)} /></Field>
+      <Msg msg={act.msg} />
+    </Modal>
   );
 }
