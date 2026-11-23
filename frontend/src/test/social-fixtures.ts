@@ -1,0 +1,192 @@
+// Synthetic Social Commerce fixtures. Clearly labelled test data — never presented as a real business.
+
+import type { SellerCard, SellerDetail, SocialDiscover, SocialOverview } from "../lib/social";
+import type { Job } from "../lib/types";
+
+export const sellerCard: SellerCard = {
+  id: 1, name: "Asha Cakes", description: "Home bakery / pre-order food — custom cakes and brownies",
+  category: "home_bakery", category_label: "Home bakery / pre-order food", locality: "adyar",
+  geo_confidence: "verified_chennai", geo_label: "Verified Chennai",
+  geo_reason: "'adyar' is inside Chennai city, stated in their location in their own business profile",
+  qualification: "S1", qualification_label: "High-fit social seller",
+  qualification_reasons: ["Passes every check", "Recent activity (10 days): New product or collection launched"],
+  score: 61, friction: "low", review_status: "shortlisted", buying_intent: "unknown",
+  offer: "Pre-Order and Delivery Tracker", next_action: "Review and approve for outreach.",
+  sales_setup: "social_whatsapp", sales_setup_label: "Social + WhatsApp orders",
+  maturity: "growing_operational", maturity_label: "Growing operational seller",
+  complexity_level: "high", complexity_count: 3,
+  platforms: ["instagram"], handles: [{ platform: "instagram", handle: "asha_cakes_chennai", url: "https://www.instagram.com/asha_cakes_chennai/" }],
+  last_activity_at: "2026-11-13T00:00:00", activity_count: 2, demand_indicator_count: 1,
+  website: "https://ashacakes.example", has_contact: true, official_contact: true, sales_ready: true,
+  research_level: "public", research_error: null, needs_human_check: false,
+  operational_fit: "strong", evidence_quality: "partial", commercial_readiness: "limited_public",
+  ai_status: "not_run", next_follow_up_at: null, is_test: true,
+};
+
+export const sellerDetail: SellerDetail = {
+  ...sellerCard,
+  geo_basis: "profile_location", geo_evidence_url: "https://ashacakes.example/",
+  geo_excerpt: "No 12, 2nd Street, Adyar, Chennai 600020",
+  geo_bases: {
+    profile_location: "location in their own business profile", official_site: "address on their own website",
+    delivery_area: "published Chennai delivery/service area", hashtag: "a Chennai hashtag",
+  },
+  weak_evidence_note: "Hashtags, caption language, followers and customer comments never count as location evidence.",
+  category_reasons: ["Describes itself with 'Custom cakes' (bakery / pre-order food)"],
+  products_excerpt: "Custom cakes and brownies, baked to order in Adyar, Chennai",
+  order_channels: ["dm", "whatsapp"], known_tools: [],
+  workflow_gaps: ["Orders arrive as chat messages, so there is no single list of what is pending"],
+  sales_setup_reason: "Published a WhatsApp number for orders, with no website",
+  complexity: [
+    { key: "custom_orders", label: "Made-to-order / customisation" },
+    { key: "advance_payment", label: "Advance / part payment before work starts" },
+    { key: "deadlines", label: "Delivery dates / lead times" },
+  ],
+  maturity_reasons: ["Last published activity 10 days ago", "3 order-complexity indicator(s)"],
+  maturity_note: "An operational description from public evidence only — not a financial assessment.",
+  gates: [
+    { key: "chennai", label: "Credible Chennai operations", passed: true, detail: "Chennai operations confirmed from the business itself" },
+    { key: "category", label: "Relevant social-commerce category", passed: true, detail: "Home bakery / food pre-orders" },
+    { key: "activity", label: "Current commercial activity", passed: true, detail: "Public business activity 10 days ago" },
+    { key: "complexity", label: "Relevant operational complexity", passed: true, detail: "3 order-complexity indicator(s)" },
+    { key: "contact", label: "Legitimate public contact route", passed: true, detail: "Business contact published on their own profile or site" },
+    { key: "fit", label: "Practical service fit", passed: true, detail: "A small workflow tool is a practical fit for how they sell" },
+  ],
+  score_breakdown: [
+    { key: "need", label: "Confirmed need or credible pain", points: 0, max: 30, why: "No evidence they want help" },
+    { key: "complexity", label: "Order and process complexity", points: 20, max: 25, why: "3 complexity indicator(s) in their own posts" },
+    { key: "activity", label: "Public business activity", points: 15, max: 15, why: "Active 10 days ago" },
+    { key: "contact", label: "Business contact accessibility", points: 8, max: 10, why: "One contact route they published themselves" },
+    { key: "simplicity", label: "Implementation simplicity", points: 8, max: 10, why: "Small, well-scoped job" },
+    { key: "source", label: "Source quality", points: 8, max: 10, why: "Location verified from the business itself" },
+  ],
+  friction_reasons: ["Easier: they publish a way to contact the business"],
+  solution: {
+    offer: "Pre-Order and Delivery Tracker", level: 3, level_label: "A shareable order form they can use on a phone",
+    known_workflow: "Seen in their own posts: made-to-order / customisation, delivery dates / lead times",
+    improvement: "A day-by-day view of what has to be made and delivered, with each order's requirements and payment status.",
+    scope: ["Order form with the item, flavour/customisation and required date", "Delivery or pickup slot"],
+    why: "Pre-order food is scheduling work: the risk is accepting more for one date than can be made.",
+    confirm_with_buyer: ["How many orders do you take for a single day?"],
+    delivery_note: "Shared as a link the seller posts or sends themselves. No automatic Instagram or WhatsApp integration is promised: that needs approved Meta API access, which has to be arranged and confirmed for each business first.",
+    existing_software: {
+      note: "General overview from public product pages.",
+      already_using: [],
+      advice: "No order/inventory software was named on their public pages.",
+      options: [{ name: "Google Forms + Sheets", url: "https://workspace.google.com/products/forms/",
+        category: "Free form and spreadsheet", solves: "Collecting order details in one place instead of chat messages. Free.",
+        burden: "No order status, no reminders.", inferago_role: "The honest first step for a seller with few orders." }],
+    },
+  },
+  accounts: [{
+    id: 1, platform: "instagram", label: "Instagram", handle: "asha_cakes_chennai",
+    url: "https://www.instagram.com/asha_cakes_chennai/", profile_name: "Asha Cakes", account_kind: "business",
+    catalogue_url: null, bio_excerpt: "Custom cakes | Adyar | DM to order", followers: 4200,
+    followers_note: "Recorded from the profile. Never used in scoring.", last_post_at: "2026-11-13T00:00:00",
+    is_primary: true, reachable: "restricted", readable_by_ioi: false,
+    source_url: "https://www.instagram.com/asha_cakes_chennai/", excerpt: null, detected_by: "rule",
+    observed_at: "2026-11-23T10:00:00",
+  }],
+  blocked_accounts: [{
+    platform: "instagram", label: "Instagram", handle: "asha_cakes_chennai",
+    url: "https://www.instagram.com/asha_cakes_chennai/",
+    why: "Instagram serves profiles only to signed-in visitors and its robots.txt restricts automated access, so IOI never fetches it. Open the profile and use 'Record what you saw'.",
+  }],
+  readable_pages: ["https://ashacakes.example"], pages_checked: ["https://ashacakes.example/"],
+  activity: [
+    { id: 5, signal_type: "product_launch", label: "New product or collection launched", indicator_class: "activity",
+      statement: "New product or collection launched", excerpt: "New collection just launched for Diwali!",
+      url: "https://ashacakes.example/", platform: "instagram", published_at: "2026-11-13T00:00:00",
+      last_checked_at: "2026-11-23T10:00:00", state: "source_verified", reliability: "medium",
+      source_name: "Their own website", detected_by: "rule", review_status: "hypothesis" },
+    { id: 6, signal_type: "sold_out", label: "Says items sold out", indicator_class: "demand_indicator",
+      statement: "Says items sold out", excerpt: "Sold out for this weekend", url: "https://ashacakes.example/",
+      platform: "instagram", published_at: null, last_checked_at: "2026-11-23T10:00:00",
+      state: "source_verified", reliability: "medium", source_name: "Their own website", detected_by: "rule",
+      review_status: "confirmed" },
+  ],
+  facts: [
+    { id: 1, kind: "workflow", key: "custom_orders", statement: "Made-to-order / customisation",
+      state: "source_verified", excerpt: "Custom cakes and brownies, baked to order",
+      source_url: "https://ashacakes.example/", source_name: "Their own website", reliability: "high",
+      published_at: null, observed_at: "2026-11-23T10:00:00", detected_by: "rule", review_status: null,
+      reviewed_by: null, label: null },
+    { id: 2, kind: "problem", key: "date_capacity",
+      statement: "May benefit from a per-day view of what has to be made and delivered", state: "inferred",
+      excerpt: null, source_url: null, source_name: null, reliability: "medium", published_at: null,
+      observed_at: "2026-11-23T10:00:00", detected_by: "rule", review_status: null, reviewed_by: null, label: null },
+  ],
+  contacts: [{ id: 1, kind: "email", value: "hello@ashacakes.example", label: null,
+    source_url: "https://ashacakes.example/", official: true }],
+  activities: [], deal: null,
+  outreach: {
+    message: "Hi Asha Cakes,\n\nI run a small software practice here in Chennai — Inferago Tech Services, registered as an MSME.\n\nWould that be worth a try? If you'd rather not, just reply 'no' and I won't message again.",
+    edited: false, contact_role: "The owner — these businesses are usually run by one person",
+    suggested_route: "Instagram DM to @asha_cakes_chennai",
+    questions: ["How many orders do you take for a single day?"],
+    notice: "IOI never sends messages. Copy the text and message them yourself. A public WhatsApp number is a contact route, not permission for bulk messages — message once, and stop if they say no.",
+    free_offer: "a ready-made pre-order form with the delivery date and advance payment on it",
+  },
+  dossier: {
+    answers: [
+      { q: "Why was this seller found?", a: "Found via you (added by hand). Accounts: Instagram @asha_cakes_chennai." },
+      { q: "What exactly do they sell?", a: "Home bakery / pre-order food" },
+      { q: "What is the likely operational problem?", a: "May benefit from a per-day view of what has to be made and delivered" },
+      { q: "Is that problem verified or a hypothesis?", a: "Hypothesis from their own public posts — not confirmed by them." },
+    ],
+  },
+  agent_events: [],
+  researched_at: "2026-11-23T10:00:00", research_error_kind: null, research_retry_after: null,
+  ai_researched_at: null, source_url: "https://www.instagram.com/asha_cakes_chennai/",
+  source_key: "manual_profile", created_at: "2026-11-23T09:00:00",
+  outreach_approved_by: null, outreach_approved_at: null, disqualifier: null,
+};
+
+const job: Job = {
+  id: 3, mode: "balanced", status: "running", stage: "research", stage_index: 6,
+  stages: [
+    { key: "finding", label: "Discovering seller profiles" }, { key: "identity", label: "Checking business identity" },
+    { key: "location", label: "Verifying Chennai" }, { key: "activity", label: "Reviewing public activity" },
+    { key: "workflows", label: "Detecting order workflows" }, { key: "research", label: "Researching promising sellers" },
+    { key: "qualify", label: "Qualifying leads" },
+  ],
+  counters: { run: { reviewed: 8, added: 3, researched: 2 }, campaign: { sellers: 12, high_fit: 3 } },
+  sources: { manual_profile: { status: "done", records: 3 }, public_search: { status: "failed", records: 0, error: "No search API is configured" } },
+  params: {}, summary: { sellers: 12 }, log: ["14:00:01 Queued (balanced)"], error: null, trigger: "manual",
+  retry_of_id: null, created_at: "2026-11-23T14:00:00", started_at: "2026-11-23T14:00:01",
+  finished_at: null, heartbeat_at: "2026-11-23T14:00:30", elapsed_s: 30, last_success: "14:00:10 Read 3 pages",
+};
+
+export const socialOverview: SocialOverview = {
+  campaign: { id: 2, name: "Chennai — Social commerce", city: "Chennai", categories: ["home_bakery"] },
+  stats: {
+    discovered: 12, verified_sellers: 7, high_fit: 3, recently_active: 9, needs_verification: 5,
+    approved: 1, qualified_conversations: 1, ready_to_review: 2, needs_human_check: 4,
+  },
+  revenue: { potential: 0, quoted: 12000, contracted: 12000, advances_received: 6000, outstanding: 6000,
+    collected_total: 6000, collected_this_month: 6000 },
+  by_platform: { instagram: 10, facebook: 3, whatsapp: 6, other: 1 },
+  by_category: { fashion_boutique: 4, custom_gifts: 3, home_bakery: 3, meal_subscription: 2, other_social: 0 },
+  by_qualification: { S0: 1, S1: 2, S2: 7, S3: 2 },
+  active_job: null, last_job: null,
+  preflight: {
+    checks: [
+      { source: "manual_profile", enabled: true, ready: true, message: "Adding a profile or catalogue link by hand always works" },
+      { source: "public_search", enabled: true, ready: false, message: "No search API is configured. Set IOI_SEARCH_PROVIDER (brave or google_cse) and IOI_SEARCH_API_KEY in .env." },
+      { source: "meta_api", enabled: false, ready: false, message: "Instagram/Facebook APIs are not set up, so profiles are never read automatically." },
+    ],
+    can_start: true, can_find_new: false,
+  },
+};
+
+export const socialDiscover: SocialDiscover = {
+  settings: { depth: "balanced", max_candidates: 40, max_research: 12, ai_max_calls: 10 },
+  preflight: socialOverview.preflight,
+  stages: job.stages,
+  categories: [
+    { key: "fashion_boutique", label: "Instagram fashion boutique", blurb: "Clothing, ethnic wear, custom apparel." },
+    { key: "home_bakery", label: "Home bakery / food pre-orders", blurb: "Custom cakes and pre-order food." },
+  ],
+  active_job: job,
+  search: { ready: false, message: "No search API is configured. Set IOI_SEARCH_PROVIDER (brave or google_cse) and IOI_SEARCH_API_KEY in .env.", example_queries: [] },
+};

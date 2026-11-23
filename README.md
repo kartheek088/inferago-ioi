@@ -190,3 +190,30 @@ scripts/dev.sh                           # backend :8000 + Vite dev server :5173
 ```
 
 See `docs/ARCHITECTURE.md` and `docs/BUILD_STATUS.md`.
+
+## Social Commerce
+
+IOI has a second, separate pipeline for Chennai businesses that sell through Instagram, Facebook and
+WhatsApp — boutiques, custom-gift makers, home bakers and tiffin services. Open **Social Commerce** in
+the sidebar.
+
+It works differently from B2B discovery because it has to:
+
+- **No website is normal.** A seller with only an Instagram page is not penalised.
+- **IOI cannot read Instagram or Facebook profiles.** Those pages are only served to signed-in
+  visitors, so IOI never fetches them. You open the profile, click **Record what you saw**, and type
+  what it says — IOI then applies the same rules to your words. It does read their own website and any
+  catalogue or order-form link they published.
+- **Adding a seller by hand always works.** Paste a profile link, an `@handle`, a WhatsApp business
+  number, a catalogue link or a website. Automatic web search needs a free API key
+  (`IOI_SEARCH_PROVIDER` / `IOI_SEARCH_API_KEY` in `.env`); until you add one, the app says so plainly
+  instead of pretending.
+- **A hashtag never proves location.** Only what the business itself states — a profile address, a
+  delivery area, a pickup point, an event listing — can place them in Chennai.
+- **Followers are shown but never scored.** Popularity is not money.
+- **Leads are S0–S3** (S0 = they asked for help or confirmed a problem to you). Approved sellers go
+  into the same Sales Pipeline as B2B leads, so there is one place to see collected revenue.
+
+Nothing is ever sent. IOI writes the message; you send it.
+
+Full detail and every limitation: `docs/SOCIAL_COMMERCE.md`.

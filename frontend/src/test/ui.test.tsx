@@ -25,11 +25,22 @@ describe("format", () => {
 });
 
 describe("navigation", () => {
-  it("has exactly the six main sections", () => {
-    expect(NAV.map((n) => n.label)).toEqual(["Home", "Discover", "Prospects", "Research", "Outreach", "Sales Pipeline", "Settings"]);
+  it("has the eight main sections, with Social Commerce as its own top-level item", () => {
+    expect(NAV.map((n) => n.label)).toEqual([
+      "Home", "B2B Discovery", "B2B Prospects", "Social Commerce", "Research Intelligence",
+      "Outreach", "Sales Pipeline", "Settings",
+    ]);
     render(<MemoryRouter><Shell><p>content</p></Shell></MemoryRouter>);
     const nav = screen.getByRole("navigation", { name: "Main" });
-    expect(within(nav).getAllByRole("link")).toHaveLength(7);
+    expect(within(nav).getAllByRole("link")).toHaveLength(8);
+  });
+
+  it("puts Social Commerce at /social-commerce, not under Discover, Prospects or Settings", () => {
+    const social = NAV.find((n) => n.label === "Social Commerce");
+    expect(social?.to).toBe("/social-commerce");
+    render(<MemoryRouter><Shell><p>content</p></Shell></MemoryRouter>);
+    const nav = screen.getByRole("navigation", { name: "Main" });
+    expect(within(nav).getByRole("link", { name: "Social Commerce" })).toHaveAttribute("href", "/social-commerce");
   });
 });
 

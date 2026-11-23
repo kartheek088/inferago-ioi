@@ -37,7 +37,7 @@ export interface ContactRoute { id?: number; kind: string; value: string; label?
 export interface ActivityItem { id: number; kind: string; summary: string; channel: string | null; actor: string; occurred_at: string }
 export interface Payment { id: number; amount: number; kind: string; received_on: string; reference: string | null; note: string | null }
 export interface Deal {
-  id: number; company_id: number; company: string; stage: string; outcome: string | null; contact_name: string | null;
+  id: number; company_id: number; company: string; channel: string; stage: string; outcome: string | null; contact_name: string | null;
   confirmed_requirement: string | null; offer: string | null; potential_amount: number | null; quoted_amount: number | null;
   expected_payment_date: string | null; delivery_status: string | null; next_follow_up_at: string | null; notes: string | null;
   collected: number; outstanding: number; payments: Payment[]; updated_at: string;
@@ -59,7 +59,7 @@ export interface CompanyDetail extends CompanyCard {
 export interface Job {
   id: number; mode: string; status: string; stage: string | null; stage_index: number; stages: { key: string; label: string }[];
   counters: { run?: Record<string, number>; pool?: Record<string, number>; campaign?: Record<string, number>; [k: string]: unknown }; sources: Record<string, { status: string; records?: number; error?: string | null }>;
-  params: Record<string, unknown>; summary: { companies?: number; by_category?: Record<string, number>; ready_to_review?: number; verified_locations?: number };
+  params: Record<string, unknown>; summary: { companies?: number; sellers?: number; by_category?: Record<string, number>; ready_to_review?: number; verified_locations?: number };
   log: string[]; error: string | null; trigger: string; retry_of_id: number | null; created_at: string; started_at: string | null;
   finished_at: string | null; heartbeat_at: string | null; elapsed_s: number | null; last_success: string | null;
 }

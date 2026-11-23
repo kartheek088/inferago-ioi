@@ -1,6 +1,6 @@
 # Build status
 
-_Last updated: 2026-11-23 (IOI 3.0)_
+_Last updated: 2026-11-23 (Social Commerce Intelligence)_
 
 ## Verification (all run locally)
 
@@ -17,6 +17,46 @@ _Last updated: 2026-11-23 (IOI 3.0)_
 | UI rendering with real data | Checked via headless Chrome screenshots (Overview, Opportunities, Detail, Sources) |
 
 `scripts/test.sh` runs the full suite.
+
+## Social Commerce Intelligence (2026-11-23)
+
+A second, independent discovery pipeline for Chennai sellers on Instagram / Facebook / WhatsApp.
+Branch `feature/social-commerce-intelligence`, migration `0013_social_commerce` (additive).
+Full detail, including every limitation: `docs/SOCIAL_COMMERCE.md`.
+
+- **Separate channel, shared money.** `channel` = `b2b` | `social_commerce` on `ioi_companies`,
+  `ioi_campaigns`, `ioi_jobs`; separate campaign, jobs, rules and qualification (S0-S3 vs P0-P3).
+  Identity, contacts, evidence, outreach approval, the 11-stage pipeline, proposals and payments are
+  shared, so an approved seller becomes a deal in the same tables. `core.evaluate()` dispatches by channel.
+- **Sidebar.** 8 sections; **Social Commerce is top-level** at `/social-commerce` with its own dashboard,
+  discovery, leads, dossier and activity screens.
+- **Sources, honestly reported.** Working: add a profile/catalogue link by hand, authorised CSV import.
+  Needs setup and says so: public web search (Brave or Google CSE key), market/exhibitor pages.
+  **Never automated by design:** Instagram, Facebook, WhatsApp profile pages, DMs, chats, groups,
+  follower lists, and the Meta Graph API (no app or permissions exist). `record_observation` is the
+  human route for a profile IOI cannot read.
+- **Geography.** Four levels; a hashtag, caption language, a follower or a customer comment can never
+  raise confidence; two independent medium sources corroborate; only `verified_chennai` passes the gate.
+- **Qualification.** 6 gates; S0 requires a human-confirmed request or buyer-confirmed problem;
+  deterministic 100-point score in 6 parts; evidence-based maturity, never financial.
+  Followers are recorded but are not an input anywhere.
+- **Offers.** Cheapest effective first: configure what they already pay for, or a free form, before any
+  build. Four named offers per category. No Meta API integration is ever promised; no checkout is
+  replaced; no domain transfer is requested.
+- **Agent.** Bounded (6 AI calls, 14 tool calls, 6 pages, 150 s, $0.03), own-domain only, social
+  platforms refused by name so prompt injection cannot reach them, every fact quote-verified, full audit
+  trail in `ioi_agent_events`.
+- **Shared pipeline.** `/api/v3/pipeline` and `/api/v3/outreach` span both channels (each row carries
+  its `channel`; `?channel=` narrows them), so an approved social seller appears beside a B2B company
+  and one revenue total covers the business. Fixing this was prompted by the browser acceptance test.
+- **Real validation (2026-11-23).** Three genuine Chennai sellers with their own websites, found by
+  public web search. One qualified cleanly (Chennai verified from their own site, complexity found,
+  offer chosen, held at S2 for want of a dated post); one exposed a real bug — a Google Sites link
+  redirecting to a sign-in page was being read as the seller's own content, contact address included;
+  one 404'd and was classified correctly. See `docs/SOCIAL_COMMERCE.md` §11.
+- **Tests.** 387 backend (294 pre-existing + 93 new, incl. agent security, login-wall and
+  cross-channel regressions, and B2B regression), 45 frontend (20 + 25 new), plus a Social Commerce
+  browser acceptance test alongside the existing B2B one.
 
 ## IOI 3.1 research engine (2026-11-23)
 

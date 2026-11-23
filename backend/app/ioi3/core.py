@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 
 from app import lead_rules
 from app.db import utcnow
-from app.ioi3 import qualify
+from app.ioi3 import models, qualify
 from app.ioi3.models import Campaign, Company, CompanyContact, DiscoverySource, Fact, Location
 from app.normalize import normalize_org_name
 
@@ -30,9 +30,11 @@ DEFAULT_MIX = {lead_rules.EQUIPMENT: 70, lead_rules.WHOLESALE: 30}
 
 
 def active_campaign(db: Session) -> Campaign:
-    c = db.scalar(select(Campaign).where(Campaign.status == "active").order_by(Campaign.id.desc()))
+    """The active B2B campaign. Channel-scoped: the social-commerce campaign is a separate row."""
+    c = db.scalar(select(Campaign).where(Campaign.channel == models.B2B, Campaign.status == "active")
+                  .order_by(Campaign.id.desc()))
     if c is None:
-        c = Campaign(name="Chennai — Equipment service & Wholesale distribution", city="Chennai",
+        c = Campaign(name="Chennai — Equipment service & Wholesale distribution", channel=models.B2B, city="Chennai",
                      industries=[lead_rules.EQUIPMENT, lead_rules.WHOLESALE], industry_mix=dict(DEFAULT_MIX),
                      settings=dict(DEFAULT_SETTINGS), status="active")
         db.add(c)
@@ -224,6 +226,16 @@ def _branches(c: Company) -> int | None:
 
 
 def evaluate(c: Company, now: datetime | None = None) -> Company:
+    """Recompute a company's qualification from stored evidence.
+
+    Each acquisition channel owns its own rules, so a social-commerce seller is evaluated by the
+    social engine (S0-S3) and a B2B company by the rules below (P0-P3). This is the one place that
+    decides, so every caller — ingestion, research, the agent, sales — stays channel-agnostic.
+    """
+    if c.channel == models.SOCIAL:
+        from app.ioi3.social import core as social_core
+
+        return social_core.evaluate(c, now)
     now = now or utcnow()
     s = snapshot(c)
     gs = qualify.gates(s)

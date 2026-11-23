@@ -7,12 +7,18 @@ export const INDUSTRY: Record<string, string> = {
   equipment_sales_service: "Equipment Sales & Service",
   wholesale_distribution: "Wholesale Distribution",
 };
+// P0-P3 are B2B leads, S0-S3 social-commerce sellers. Shared screens (Outreach, Sales Pipeline) show both.
 export const QUAL: Record<string, { label: string; short: string; tone: Tone }> = {
   P0: { label: "Confirmed opportunity", short: "P0", tone: "ok" },
   P1: { label: "High-fit prospect", short: "P1", tone: "info" },
   P2: { label: "Watchlist", short: "P2", tone: "neutral" },
   P3: { label: "Excluded", short: "P3", tone: "bad" },
+  S0: { label: "Confirmed opportunity", short: "S0", tone: "ok" },
+  S1: { label: "High-fit social seller", short: "S1", tone: "info" },
+  S2: { label: "Watchlist", short: "S2", tone: "neutral" },
+  S3: { label: "Excluded", short: "S3", tone: "bad" },
 };
+export const CHANNEL: Record<string, string> = { b2b: "B2B", social_commerce: "Social" };
 export const LOCATION: Record<string, { label: string; tone: Tone }> = {
   verified: { label: "Chennai · verified", tone: "ok" },
   partial: { label: "Chennai · partly verified", tone: "warn" },

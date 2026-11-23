@@ -19,7 +19,7 @@ test("first run → discovery → prospect → outreach → reply → pipeline �
   await expect(page.getByText("₹0").first()).toBeVisible();
 
   // 3. Start a real discovery job (Quick: real Overture records, no internet) and watch progress
-  await page.getByRole("link", { name: "Discover" }).first().click();
+  await page.getByRole("link", { name: "B2B Discovery" }).first().click();
   await page.getByText("Quick", { exact: true }).click();
   await page.getByLabel("Candidate limit").fill("15");
   await page.getByRole("button", { name: "Find Chennai Prospects" }).click();
@@ -29,7 +29,7 @@ test("first run → discovery → prospect → outreach → reply → pipeline �
   await page.screenshot({ path: "e2e/screens/discover.png", fullPage: true });
 
   // 4. Relevant Chennai businesses are listed
-  await page.getByRole("link", { name: "Prospects" }).first().click();
+  await page.getByRole("link", { name: "B2B Prospects" }).first().click();
   await page.getByRole("tab", { name: /^All/ }).click();
   await expect(page.getByTestId("prospect-card").first()).toBeVisible();
   const cards = await page.getByTestId("prospect-card").count();

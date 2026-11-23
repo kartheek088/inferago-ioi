@@ -14,6 +14,7 @@ from app import jobs
 from app.api import big_projects, chains, core, leads, opportunities, outreach, prospects, sources
 from app.api.deps import require_auth
 from app.ioi3.api import router as ioi3_router
+from app.ioi3.social.api import router as social_router
 from app.config import get_settings
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -34,6 +35,11 @@ async def lifespan(_: FastAPI):
         _recover_prospect_runs(db)
         ioi3_core.seed_sources(db)
         ioi3_core.active_campaign(db)
+        # Social commerce is a separate acquisition channel: its own sources and its own campaign.
+        from app.ioi3.social import core as social_core
+
+        social_core.seed_sources(db)
+        social_core.active_campaign(db)
         ioi3_engine.recover(db)
     ioi3_engine.start_worker()
     jobs.start()
@@ -101,7 +107,7 @@ def create_app() -> FastAPI:
     )
     app.include_router(core.public, prefix="/api")
     protected = [Depends(require_auth)]
-    for r in (ioi3_router, core.router, leads.router, sources.router, opportunities.router, outreach.router, prospects.router, big_projects.router, chains.router):
+    for r in (ioi3_router, social_router, core.router, leads.router, sources.router, opportunities.router, outreach.router, prospects.router, big_projects.router, chains.router):
         app.include_router(r, prefix="/api", dependencies=protected)
     _mount_frontend(app)
     return app

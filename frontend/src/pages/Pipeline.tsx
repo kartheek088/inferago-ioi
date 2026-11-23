@@ -65,6 +65,7 @@ export default function Pipeline() {
                         {deals.map((x) => (
                           <article key={x.id} className="rounded-xl border border-border bg-surface p-3 text-sm shadow-sm transition hover:shadow-md">
                             <button className="text-left font-medium hover:text-brand" onClick={() => setOpen(x)}>{x.company}</button>
+                            {x.channel === "social_commerce" && <div><Badge tone="brand" title="Came from Social Commerce discovery">Social</Badge></div>}
                             {x.outcome && <div><Badge tone={x.outcome === "follow_up_later" ? "warn" : "bad"}>{d.outcomes.find((o) => o.key === x.outcome)?.label}</Badge></div>}
                             <div className="mt-1 text-xs text-subtle">{x.offer ?? "No offer yet"}</div>
                             <div className="mt-1 text-xs tabular-nums">{x.quoted_amount ? `Quoted ${rupees(x.quoted_amount)}` : ""}{x.collected ? ` · Paid ${rupees(x.collected)}` : ""}</div>

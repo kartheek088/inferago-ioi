@@ -14,6 +14,12 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import Base, utcnow
 
+# Acquisition channel: which pipeline a record belongs to. Shared tables carry it so the two
+# pipelines stay isolated while sharing identity, contacts, evidence, outreach and payments.
+B2B = "b2b"
+SOCIAL = "social_commerce"
+CHANNELS = (B2B, SOCIAL)
+
 
 class _Stamped:
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
@@ -25,8 +31,9 @@ class Campaign(_Stamped, Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(200))
+    channel: Mapped[str] = mapped_column(String(20), default=B2B, index=True)  # b2b | social_commerce
     city: Mapped[str] = mapped_column(String(100), default="Chennai")
-    industries: Mapped[list[str]] = mapped_column(JSON, default=list)  # equipment_service | wholesale_distribution
+    industries: Mapped[list[str]] = mapped_column(JSON, default=list)  # equipment_service | wholesale_distribution, or social categories
     industry_mix: Mapped[dict[str, int]] = mapped_column(JSON, default=dict)  # share of discovery effort, e.g. {"equipment_service": 70}
     settings: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)  # depth, limits, schedule
     status: Mapped[str] = mapped_column(String(20), default="active", index=True)  # active | archived
@@ -63,6 +70,7 @@ class Job(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     campaign_id: Mapped[int] = mapped_column(ForeignKey("ioi_campaigns.id", ondelete="CASCADE"), index=True)
+    channel: Mapped[str] = mapped_column(String(20), default=B2B, index=True)  # which pipeline's runner executes this job
     mode: Mapped[str] = mapped_column(String(20))  # quick | balanced | deep
     status: Mapped[str] = mapped_column(String(20), default="queued", index=True)
     # queued | running | stopping | stopped | completed | failed | interrupted
@@ -114,6 +122,7 @@ class Company(_Stamped, Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     campaign_id: Mapped[int] = mapped_column(ForeignKey("ioi_campaigns.id", ondelete="CASCADE"), index=True)
+    channel: Mapped[str] = mapped_column(String(20), default=B2B, index=True)  # b2b | social_commerce
     name: Mapped[str] = mapped_column(String(300))
     normalized_name: Mapped[str] = mapped_column(String(300), index=True)
     industry: Mapped[str | None] = mapped_column(String(40), index=True)  # equipment_service | wholesale_distribution
@@ -134,7 +143,8 @@ class Company(_Stamped, Base):
     activity: Mapped[str] = mapped_column(String(20), default="unknown")  # active | likely_active | unknown | inactive
     description: Mapped[str | None] = mapped_column(Text)  # short, source-based
     # Qualification (deterministic)
-    qualification: Mapped[str] = mapped_column(String(4), default="P2", index=True)  # P0 | P1 | P2 | P3
+    # P0-P3 for the B2B channel, S0-S3 for social commerce (each channel's own engine owns this column).
+    qualification: Mapped[str] = mapped_column(String(4), default="P2", index=True)
     qualification_reasons: Mapped[list[str]] = mapped_column(JSON, default=list)
     gates: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
     score: Mapped[int] = mapped_column(Integer, default=0, index=True)
@@ -182,6 +192,13 @@ class Company(_Stamped, Base):
                                                        order_by="Location.id")
     people: Mapped[list["Person"]] = relationship(back_populates="company", cascade="all, delete-orphan", passive_deletes=True,
                                                   order_by="Person.id")
+    # Social-commerce channel only (empty for B2B companies)
+    social_accounts: Mapped[list["SocialAccount"]] = relationship(back_populates="company", cascade="all, delete-orphan",
+                                                                  passive_deletes=True, order_by="SocialAccount.id")
+    social_activity: Mapped[list["SocialActivity"]] = relationship(back_populates="company", cascade="all, delete-orphan",
+                                                                   passive_deletes=True, order_by="SocialActivity.id")
+    social: Mapped["SocialProfile | None"] = relationship(back_populates="company", cascade="all, delete-orphan",
+                                                          passive_deletes=True, uselist=False)
 
 
 class Location(Base):
@@ -385,3 +402,125 @@ class AgentEvent(Base):
     cost_usd: Mapped[float | None] = mapped_column(Float)
     evidence_ids: Mapped[list[int]] = mapped_column(JSON, default=list)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
+
+
+# ------------------------------------------------------------------------------------------------
+# Social commerce (channel = social_commerce). Shared identity, contacts, evidence, outreach,
+# deals and payments stay in the tables above; only social-specific facts live here.
+# ------------------------------------------------------------------------------------------------
+class SocialAccount(Base):
+    """One public platform account belonging to a seller, with the page that evidences it.
+
+    Follower counts are recorded when a public profile states them, but never affect qualification
+    or scoring: popularity is not revenue, budget or buying intent.
+    """
+
+    __tablename__ = "ioi_social_accounts"
+    __table_args__ = (UniqueConstraint("company_id", "platform", "handle", name="uq_ioi_social_account"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("ioi_companies.id", ondelete="CASCADE"), index=True)
+    platform: Mapped[str] = mapped_column(String(20), index=True)  # instagram | facebook | whatsapp | other
+    handle: Mapped[str] = mapped_column(String(200))
+    url: Mapped[str] = mapped_column(String(2048))
+    profile_name: Mapped[str | None] = mapped_column(String(300))
+    account_kind: Mapped[str] = mapped_column(String(20), default="unknown")  # business | creator | page | personal | unknown
+    catalogue_url: Mapped[str | None] = mapped_column(String(2048))
+    bio_excerpt: Mapped[str | None] = mapped_column(Text)
+    followers: Mapped[int | None] = mapped_column(Integer)  # recorded only; never scored
+    last_post_at: Mapped[datetime | None] = mapped_column(DateTime)
+    is_primary: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Provenance: where we saw that this account belongs to this business.
+    source_url: Mapped[str] = mapped_column(String(2048))
+    excerpt: Mapped[str | None] = mapped_column(Text)
+    reachable: Mapped[str] = mapped_column(String(20), default="unknown")  # public | restricted | not_found | unknown
+    detected_by: Mapped[str] = mapped_column(String(20), default="rule")  # rule | ai | owner
+    observed_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+    company: Mapped["Company"] = relationship(back_populates="social_accounts")
+
+
+class SocialActivity(Base):
+    """A dated, publicly visible business signal from a permitted source.
+
+    `indicator_class` separates what the post *shows* (activity) from what it only *suggests*
+    (demand_indicator). Neither is proof of sales, order volume, revenue or budget.
+    """
+
+    __tablename__ = "ioi_social_activity"
+    __table_args__ = (
+        UniqueConstraint("company_id", "url", "signal_type", name="uq_ioi_social_activity"),
+        Index("ix_ioi_social_activity_company_published", "company_id", "published_at"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("ioi_companies.id", ondelete="CASCADE"), index=True)
+    account_id: Mapped[int | None] = mapped_column(ForeignKey("ioi_social_accounts.id", ondelete="SET NULL"))
+    platform: Mapped[str | None] = mapped_column(String(20))
+    signal_type: Mapped[str] = mapped_column(String(40), index=True)
+    indicator_class: Mapped[str] = mapped_column(String(20), default="activity")  # activity | demand_indicator
+    statement: Mapped[str] = mapped_column(Text)
+    excerpt: Mapped[str | None] = mapped_column(Text)
+    url: Mapped[str] = mapped_column(String(2048))
+    published_at: Mapped[datetime | None] = mapped_column(DateTime)  # NULL = the source showed no date
+    last_checked_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    state: Mapped[str] = mapped_column(String(20), default="source_verified")  # source_verified | inferred | unknown
+    reliability: Mapped[str] = mapped_column(String(10), default="medium")  # high | medium | low
+    source_name: Mapped[str | None] = mapped_column(String(120))
+    detected_by: Mapped[str] = mapped_column(String(20), default="rule")  # rule | ai | owner
+    review_status: Mapped[str | None] = mapped_column(String(20))  # hypothesis | confirmed | rejected
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+    company: Mapped["Company"] = relationship(back_populates="social_activity")
+
+
+class SocialProfile(_Stamped, Base):
+    """The social-commerce assessment of one seller (one row per company in the social channel).
+
+    The S0-S3 category, gates, score and solution are written to the shared `ioi_companies` columns
+    so outreach, approval and the sales pipeline work unchanged; this table holds what is specific
+    to selling through social platforms.
+    """
+
+    __tablename__ = "ioi_social_profiles"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("ioi_companies.id", ondelete="CASCADE"), unique=True, index=True)
+    # What they sell
+    product_category: Mapped[str | None] = mapped_column(String(40), index=True)
+    # fashion_boutique | custom_gifts | home_bakery | meal_subscription | other_social
+    category_reasons: Mapped[list[str]] = mapped_column(JSON, default=list)
+    products_excerpt: Mapped[str | None] = mapped_column(Text)
+    # Where they operate (social sellers often have no storefront)
+    geo_confidence: Mapped[str] = mapped_column(String(20), default="unclear", index=True)
+    # verified_chennai | probable_chennai | unclear | outside_chennai
+    geo_reason: Mapped[str | None] = mapped_column(Text)
+    geo_basis: Mapped[str | None] = mapped_column(String(30))  # profile_address | delivery_area | pickup_point | event_listing | official_site | owner
+    geo_evidence_url: Mapped[str | None] = mapped_column(String(2048))
+    geo_excerpt: Mapped[str | None] = mapped_column(Text)
+    # How they sell today
+    sales_setup: Mapped[str] = mapped_column(String(30), default="unknown")
+    # social_only | social_whatsapp | social_simple_site | social_full_ecommerce | marketplace_led | multi_channel | unknown
+    sales_setup_reason: Mapped[str | None] = mapped_column(Text)
+    order_channels: Mapped[list[str]] = mapped_column(JSON, default=list)  # dm | whatsapp | phone | form | website_cart | marketplace
+    known_tools: Mapped[list[str]] = mapped_column(JSON, default=list)  # order/inventory software named on a public page
+    workflow_gaps: Mapped[list[str]] = mapped_column(JSON, default=list)
+    # Operational complexity — indicators that a workflow tool may be relevant, not proof of a problem
+    complexity_keys: Mapped[list[str]] = mapped_column(JSON, default=list)
+    complexity_level: Mapped[str] = mapped_column(String(20), default="unknown")  # high | moderate | low | unknown
+    # Evidence-based operational maturity (never a financial judgement)
+    maturity: Mapped[str] = mapped_column(String(30), default="activity_unclear", index=True)
+    # growing_operational | established_social | early_stage | activity_unclear | inactive_unverified
+    maturity_reasons: Mapped[list[str]] = mapped_column(JSON, default=list)
+    last_activity_at: Mapped[datetime | None] = mapped_column(DateTime)
+    activity_count: Mapped[int] = mapped_column(Integer, default=0)
+    demand_indicator_count: Mapped[int] = mapped_column(Integer, default=0)
+    # Research state (separate from the B2B website research on ioi_companies)
+    research_level: Mapped[str] = mapped_column(String(20), default="profile")  # profile | public | deep
+    researched_at: Mapped[datetime | None] = mapped_column(DateTime)
+    research_error: Mapped[str | None] = mapped_column(Text)
+    research_error_kind: Mapped[str | None] = mapped_column(String(20))  # retryable | permanent
+    research_retry_after: Mapped[datetime | None] = mapped_column(DateTime)
+    pages_checked: Mapped[list[str]] = mapped_column(JSON, default=list)
+
+    company: Mapped["Company"] = relationship(back_populates="social")

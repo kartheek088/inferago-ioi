@@ -1,17 +1,21 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { NavLink, useLocation } from "react-router-dom";
-import { Compass, FileSearch, Home, KanbanSquare, Moon, Send, Settings, Sun, Users } from "lucide-react";
+import { Compass, FileSearch, Home, KanbanSquare, Moon, Send, Settings, ShoppingBag, Sun, Users } from "lucide-react";
 import { cn } from "../lib/format";
 
+/** The two discovery pipelines are separate top-level destinations, never nested inside each other. */
 export const NAV = [
-  { to: "/", label: "Home", icon: Home },
-  { to: "/discover", label: "Discover", icon: Compass },
-  { to: "/prospects", label: "Prospects", icon: Users },
-  { to: "/research", label: "Research", icon: FileSearch },
-  { to: "/outreach", label: "Outreach", icon: Send },
-  { to: "/pipeline", label: "Sales Pipeline", icon: KanbanSquare },
-  { to: "/settings", label: "Settings", icon: Settings },
+  { to: "/", label: "Home", icon: Home, short: "Home", mobile: true },
+  { to: "/discover", label: "B2B Discovery", icon: Compass, short: "B2B" },
+  { to: "/prospects", label: "B2B Prospects", icon: Users, short: "Leads", mobile: true },
+  { to: "/social-commerce", label: "Social Commerce", icon: ShoppingBag, short: "Social", mobile: true },
+  { to: "/research", label: "Research Intelligence", icon: FileSearch, short: "Research" },
+  { to: "/outreach", label: "Outreach", icon: Send, short: "Outreach", mobile: true },
+  { to: "/pipeline", label: "Sales Pipeline", icon: KanbanSquare, short: "Pipeline", mobile: true },
+  { to: "/settings", label: "Settings", icon: Settings, short: "Settings" },
 ];
+
+const MOBILE = NAV.filter((n) => n.mobile);
 
 export function useTheme(): [boolean, () => void] {
   const [dark, setDark] = useState(() => { try { return localStorage.getItem("ioi_theme") !== "light"; } catch { return true; } });
@@ -54,11 +58,11 @@ export function Shell({ children, status }: { children: ReactNode; status?: Reac
           <div className="flex items-center gap-2">{status}<button onClick={toggle} className="rounded p-2 text-subtle" aria-label="Toggle dark mode">{dark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}</button></div>
         </header>
         <main key={loc.pathname} className="mx-auto w-full max-w-6xl flex-1 px-4 pb-24 pt-6 sm:px-6 md:pb-10">{children}</main>
-        <nav className="fixed inset-x-0 bottom-0 z-30 grid grid-cols-7 border-t border-border bg-surface md:hidden" aria-label="Main mobile">
-          {NAV.map((n) => (
+        <nav className="fixed inset-x-0 bottom-0 z-30 grid grid-cols-5 border-t border-border bg-surface md:hidden" aria-label="Main mobile">
+          {MOBILE.map((n) => (
             <NavLink key={n.to} to={n.to} end={n.to === "/"}
               className={({ isActive }) => cn("flex flex-col items-center gap-0.5 py-2 text-[10px] no-underline hover:no-underline", isActive ? "text-brand" : "text-subtle")}>
-              <n.icon className="h-5 w-5" aria-hidden />{n.label.replace("Sales ", "").replace("Prospects", "Leads")}
+              <n.icon className="h-5 w-5" aria-hidden />{n.short}
             </NavLink>
           ))}
         </nav>
