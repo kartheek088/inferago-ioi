@@ -53,7 +53,7 @@ _SOCIAL = re.compile(r"facebook\.com|instagram\.com|linkedin\.com|twitter\.com|x
 _EMAIL = re.compile(r"(?<![\w.+-])([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})(?![\w-])")
 _PHONE = re.compile(r"(?:\+91[\s-]?|\b0)?(?:44[\s-]?\d{4}[\s-]?\d{4}|[6-9]\d{4}[\s-]?\d{5})\b")
 _LINK = re.compile(r"<a\b[^>]*href=[\"']([^\"'#]+)[\"'][^>]*>(.*?)</a>", re.I | re.S)
-_SUBPAGE = re.compile(r"contact|about|service|support|branch|location|amc|reach|network|dealer|career|news|press", re.I)
+_SUBPAGE = re.compile(r"contact|about|service|support|branch|location|amc|reach|network|dealer|career|news|press|team|leadership|management|testimonial|client|case", re.I)
 _YEAR = re.compile(r"(?:©|&copy;|copyright)\s*(?:\d{4}\s*[-–]\s*)?(20\d{2})", re.I)
 
 

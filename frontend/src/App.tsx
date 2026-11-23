@@ -10,6 +10,7 @@ import Discover from "./pages/Discover";
 import Prospects from "./pages/Prospects";
 import ProspectDetail from "./pages/ProspectDetail";
 import Outreach from "./pages/Outreach";
+import Research from "./pages/Research";
 import Pipeline from "./pages/Pipeline";
 import Settings from "./pages/Settings";
 import Onboarding from "./pages/Onboarding";
@@ -65,6 +66,7 @@ export default function App() {
         <Route path="/discover" element={<Discover />} />
         <Route path="/prospects" element={<Prospects />} />
         <Route path="/prospects/:id" element={<ProspectDetail />} />
+        <Route path="/research" element={<Research />} />
         <Route path="/outreach" element={<Outreach />} />
         <Route path="/pipeline" element={<Pipeline />} />
         <Route path="/settings" element={<Settings />} />

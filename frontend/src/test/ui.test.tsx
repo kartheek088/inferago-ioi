@@ -26,26 +26,26 @@ describe("format", () => {
 
 describe("navigation", () => {
   it("has exactly the six main sections", () => {
-    expect(NAV.map((n) => n.label)).toEqual(["Home", "Discover", "Prospects", "Outreach", "Sales Pipeline", "Settings"]);
+    expect(NAV.map((n) => n.label)).toEqual(["Home", "Discover", "Prospects", "Research", "Outreach", "Sales Pipeline", "Settings"]);
     render(<MemoryRouter><Shell><p>content</p></Shell></MemoryRouter>);
     const nav = screen.getByRole("navigation", { name: "Main" });
-    expect(within(nav).getAllByRole("link")).toHaveLength(6);
+    expect(within(nav).getAllByRole("link")).toHaveLength(7);
   });
 });
 
 describe("Home", () => {
   it("shows real zero values and an honest empty state", async () => {
-    mockApi({ "/home": { stats: { qualified: 0, new_signals: 0, follow_ups_due: 0, collected_this_month: 0 }, goal: 30000, best: [], revenue: emptyRevenue,
+    mockApi({ "/home": { stats: { qualified: 0, new_signals: 0, follow_ups_due: 0, collected_this_month: 0 }, goal: 30000, engine: { running: false, job: null }, awaiting_approval: 0, strong_signals: [], ai: { configured: false }, best: [], revenue: emptyRevenue,
       last_job: null, tasks: { leads_to_review: 0, signals_to_check: 0, follow_ups_due: [], replies: [], proposals: [] } } });
     renderAt("/", "/", <Home />);
     expect(await screen.findByText("No prospects ready yet")).toBeInTheDocument();
     expect(screen.getByText(/IOI never invents leads/)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Start Discovery/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Find Chennai Prospects/ })).toBeInTheDocument();
     expect(screen.getByText("No discovery run yet")).toBeInTheDocument();
   });
 
   it("shows collected revenue only from the API", async () => {
-    mockApi({ "/home": { stats: { qualified: 1, new_signals: 2, follow_ups_due: 1, collected_this_month: 15000 }, goal: 30000, best: [card],
+    mockApi({ "/home": { stats: { qualified: 1, new_signals: 2, follow_ups_due: 1, collected_this_month: 15000 }, goal: 30000, engine: { running: false, job: null }, awaiting_approval: 0, strong_signals: [], ai: { configured: false }, best: [card],
       revenue: { ...emptyRevenue, quoted: 40000, collected_this_month: 15000, outstanding: 25000 }, last_job: null,
       tasks: { leads_to_review: 1, signals_to_check: 0, follow_ups_due: [], replies: [], proposals: [] } } });
     renderAt("/", "/", <Home />);
@@ -83,7 +83,7 @@ describe("Discover", () => {
     });
     renderAt("/discover", "/discover", <Discover />);
     fireEvent.click(await screen.findByText("Quick"));
-    fireEvent.click(screen.getByRole("button", { name: /Start Discovery/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Find Chennai Prospects/ }));
     await waitFor(() => expect(calls.some((c) => c.method === "POST" && c.url === "/jobs")).toBe(true));
     expect(calls.find((c) => c.method === "POST")?.body).toMatchObject({ mode: "quick", max_candidates: 50 });
   });

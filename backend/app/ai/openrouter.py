@@ -145,6 +145,7 @@ class OpenRouterClient:
             except httpx.HTTPError as exc:
                 last_error = f"{type(exc).__name__}: {exc}"
                 self._log(task, False, error=last_error)
+                time.sleep(min(4, 0.5 * (2 ** attempt)))  # transient network/DNS problems: back off before retrying
                 continue
             latency = int((time.monotonic() - started) * 1000)
             if res.status_code in (429, 500, 502, 503, 504):

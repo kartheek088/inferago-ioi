@@ -45,6 +45,10 @@ cd frontend && npm run typecheck && npm run build
   A Chennai address is verified only from an official site or by the owner, never from a directory or 044 code.
 - **Facts vs assumptions (3.0).** Every `ioi_facts` row has a state: source_verified / inferred / buyer_confirmed / unknown.
   Never store a guess as source_verified. Only recorded payments count as collected revenue.
+- **SQLite + threads (3.1).** Never hold a transaction open across network or AI calls; write job progress with
+  `fetch.short_write`, retry commits with `fetch.with_retry` (WAL snapshot conflicts fail instantly with "database is locked").
+- **Agent rules.** Read-only typed tools, company's own domain only, every fact/person needs a verbatim quote from a page fetched
+  in that session, hard limits, every step logged. Never add tools that send, submit or write outside IOI.
 - Tests must not hit the live internet — use the `web` fixture (httpx.MockTransport).
 
 ## Layout (backend/app)
@@ -63,7 +67,7 @@ cd frontend && npm run typecheck && npm run build
 | `outreach.py` | drafts, approvals, call tasks, follow-ups |
 | `prospects.py` | prospect finder: OSM/Overpass search, segments, gap scoring, website audit, pitch drafts (`api/prospects.py`) |
 | `chennai.py`, `lead_rules.py`, `leads.py` | Chennai-only lead pipeline (default scope): city-limit geography, two-industry classification, signals, A–D category + sales difficulty, website verification, news signals (`api/leads.py`) |
-| `ioi3/` | **IOI 3.0**: `models.py` (ioi_* tables), `core.py` (campaign, sources, evidence, identity, evaluate), `collect.py` (Overture/CSV/manual → ingest), `research.py` (website + news), `qualify.py` (gates, P0–P3, score, friction, solution), `engine.py` (persistent jobs, worker thread), `sales.py` (outreach, pipeline, payments), `api.py` |
+| `ioi3/` | **IOI 3.0**: `models.py` (ioi_* tables), `core.py` (campaign, sources, evidence, identity, evaluate), `collect.py` (Overture/CSV/manual → ingest), `research.py` (website + news), `qualify.py` (gates, P0–P3, score, friction, solution), `engine.py` (persistent jobs, worker thread, lock-safe progress), `fetch.py` (page cache, error classes, SQLite lock retry), `agent.py` (bounded tool-calling research agent, audited in ioi_agent_events), `solutions.py` (existing-software fit), `sales.py` (outreach, pipeline, payments), `api.py` |
 | `reset.py` | backup / preview / guarded execute of the old-data reset (CLI only; rows only, never tables) |
 | `documents.py`, `imports.py` | PDF/DOCX tender analysis, manual URL/doc import |
 | `http_client.py` | SSRF-safe fetcher (timeouts, size limits, robots, rate limit) |

@@ -8,7 +8,7 @@ import ipaddress
 import socket
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from urllib.parse import urljoin, urlsplit
 from urllib.robotparser import RobotFileParser
 
@@ -48,9 +48,18 @@ def _ip_is_public(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
     )
 
 
-def default_resolver(host: str) -> list[str]:
-    infos = socket.getaddrinfo(host, None, proto=socket.IPPROTO_TCP)
-    return list({info[4][0] for info in infos})
+def default_resolver(host: str, attempts: int = 3) -> list[str]:
+    """Resolve a host. Temporary resolver failures (EAI_AGAIN — e.g. a flaky home router) are retried briefly;
+    a real "name not known" fails immediately."""
+    for i in range(attempts):
+        try:
+            infos = socket.getaddrinfo(host, None, proto=socket.IPPROTO_TCP)
+            return list({info[4][0] for info in infos})
+        except socket.gaierror as exc:
+            if exc.errno != socket.EAI_AGAIN or i == attempts - 1:
+                raise
+            time.sleep(0.4 * (2 ** i))
+    raise OSError("unreachable")
 
 
 def validate_url(url: str, *, resolver=default_resolver, allow_private: bool | None = None) -> str:
@@ -81,7 +90,7 @@ def validate_url(url: str, *, resolver=default_resolver, allow_private: bool | N
         try:
             addrs = resolver(host)
         except OSError as exc:
-            raise BlockedURLError(f"Could not resolve host {host}") from exc
+            raise BlockedURLError(f"Could not resolve host {host} ({exc})") from exc
     if not addrs:
         raise BlockedURLError(f"Host {host} did not resolve")
     for a in addrs:
@@ -96,6 +105,7 @@ class FetchResult:
     status_code: int
     content_type: str
     content: bytes
+    headers: dict = field(default_factory=dict)  # cache validators only (etag, last-modified)
 
     @property
     def text(self) -> str:
@@ -192,7 +202,7 @@ class SafeHttp:
             self.requests_made += 1
             try:
                 with self.client.stream("GET", current, headers=headers, params=params) as resp:
-                    if resp.is_redirect:
+                    if resp.is_redirect and resp.status_code != 304:  # 304 Not Modified is a cache answer, not a redirect
                         loc = resp.headers.get("location")
                         if not loc:
                             raise FetchError("Redirect without location")
@@ -215,6 +225,7 @@ class SafeHttp:
                         status_code=resp.status_code,
                         content_type=resp.headers.get("content-type", ""),
                         content=bytes(buf),
+                        headers={k: resp.headers[k] for k in ("etag", "last-modified") if k in resp.headers},
                     )
             except httpx.TimeoutException as exc:
                 raise FetchError(f"Timeout fetching {current}") from exc

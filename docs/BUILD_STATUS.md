@@ -18,6 +18,10 @@ _Last updated: 2026-11-23 (IOI 3.0)_
 
 `scripts/test.sh` runs the full suite.
 
+## IOI 3.1 research engine (2026-11-23)
+
+See `docs/RESEARCH_ENGINE_3.1.md` for the branch audit, root causes, benchmark, security tests and live validation. Branch `ioi-3.1-research`, migration 0012 (additive).
+
 ## IOI 3.0 rebuild (2026-11-23)
 
 - **Preservation.** Tags `v2-final` (before Chennai refocus) and `v2.5-chennai`; branch `ioi-3.0`. Verified backups in

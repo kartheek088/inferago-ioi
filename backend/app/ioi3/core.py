@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from urllib.parse import urlsplit
 from datetime import datetime
 from typing import Any
 
@@ -104,14 +105,23 @@ def mark_source(db: Session, key: str, *, ok: bool, records: int | None = None, 
 # ------------------------------------------------------------------------------------------------
 def add_fact(c: Company, *, kind: str, statement: str, state: str, key: str | None = None, excerpt: str | None = None,
              source_url: str | None = None, source_name: str | None = None, reliability: str = "medium",
-             published_at: datetime | None = None, detected_by: str = "rule", review_status: str | None = None) -> Fact | None:
+             published_at: datetime | None = None, detected_by: str = "rule", review_status: str | None = None,
+             source_type: str | None = None, account_type: str | None = None) -> Fact | None:
     assert state in ("source_verified", "inferred", "buyer_confirmed", "unknown")
+    if source_type is None:  # where the statement came from, inferred from how it was recorded
+        sn = (source_name or "").lower()
+        source_type = ("buyer" if detected_by == "buyer" or state == "buyer_confirmed" else "owner" if detected_by == "owner"
+                       else "official_site" if sn.startswith("official website") else "directory" if "overture" in sn
+                       else "news" if source_name and kind == "signal" and not sn.startswith("official") else None)
+    if account_type is None:
+        account_type = {"official_site": "company_published", "directory": "third_party", "news": "third_party",
+                        "buyer": "buyer", "owner": "owner"}.get(source_type or "")
     for f in c.facts:
         if f.kind == kind and f.key == key and f.source_url == source_url and (key or f.statement == statement):
             return None
     f = Fact(kind=kind, statement=statement[:2000], state=state, key=key, excerpt=(excerpt or None) and excerpt[:1500],
              source_url=source_url, source_name=source_name, reliability=reliability, published_at=published_at,
-             detected_by=detected_by, review_status=review_status)
+             detected_by=detected_by, review_status=review_status, source_type=source_type, account_type=account_type)
     c.facts.append(f)
     return f
 
@@ -198,8 +208,19 @@ def snapshot(c: Company) -> qualify.Snapshot:
         buyer_confirmed_problems=[f.statement for f in c.facts if f.kind == "problem" and f.state == "buyer_confirmed"],
         tools={f.key for f in c.facts if f.kind == "tools" and f.state in ("source_verified", "buyer_confirmed") and f.key},
         disqualifier=c.disqualifier, review_status=c.review_status, research_level=c.research_level,
-        legal_form=lead_rules.legal_form(c.name),
+        legal_form=lead_rules.legal_form(c.name), scope_confirmed=bool(c.scope_confirmed),
+        branch_count=_branches(c),
+        official_facts=sum(1 for f in c.facts if f.state == "source_verified" and f.source_type == "official_site"),
     )
+
+
+def _branches(c: Company) -> int | None:
+    for f in c.facts:
+        if f.key == "branches":
+            m = re.search(r"(\d+)", f.statement)
+            if m:
+                return int(m.group(1))
+    return None
 
 
 def evaluate(c: Company, now: datetime | None = None) -> Company:
@@ -213,8 +234,43 @@ def evaluate(c: Company, now: datetime | None = None) -> Company:
     c.score, c.score_breakdown = qualify.score(s, sol.get("level"), now)
     c.friction, c.friction_reasons = qualify.friction(s)
     c.buying_intent = qualify.buying_intent(s, now)
+    c.operational_fit = qualify.operational_fit(s)
+    c.commercial_readiness = qualify.commercial_readiness(s, now)
+    c.evidence_quality = qualify.evidence_quality(s)
     c.next_action = qualify.next_action(c.qualification, gs, s)
+    c.dossier = {**(c.dossier or {}), "answers": explain(c, s, gs)}
+    if c.review_status == "shortlisted" and not qualify.sales_ready(gs):
+        c.review_status = "new"  # left the ready queue: a check is no longer passed (e.g. size check opened)
     return c
+
+
+SOURCE_LABEL = {"overture_places": "a public business directory (Overture Maps)", "csv_import": "a list you imported", "manual": "you (added by hand)"}
+
+
+def explain(c: Company, s: qualify.Snapshot, gs: list[dict]) -> list[dict]:
+    """Plain answers to the questions every lead must answer. Deterministic, from stored evidence only."""
+    sol = c.solution or {}
+    agent = (c.dossier or {}).get("agent") or {}
+    verified = [f for f in c.facts if f.state == "source_verified" and f.kind in ("workflow", "identity", "activity", "testimonial")]
+    problems = [f for f in c.facts if f.kind == "problem"]
+    confirmed = [f for f in problems if f.state == "buyer_confirmed"]
+    open_gates = [g["label"] for g in gs if g["passed"] is not True]
+    who = [f"{p.name} — {p.role} (published on {urlsplit(p.source_url).hostname})" for p in c.people[:4]]
+    who += [f"{x.kind}: {x.value} ({'their website' if x.official else 'directory'})" for x in c.contacts[:3]]
+    return [
+        {"q": "Why was this company found?", "a": f"Found via {SOURCE_LABEL.get(c.source_key, c.source_key)}"
+             + (f" as '{c.directory_category}'" if c.directory_category else "") + "."},
+        {"q": "What exactly does it do?", "a": c.description or "Not known yet."},
+        {"q": "What evidence exists?", "a": f"{len(verified)} source-verified facts, {sum(1 for f in c.facts if f.state == 'inferred')} hypotheses, "
+             f"{sum(1 for f in c.facts if f.state == 'unknown')} open unknowns. Evidence quality: {c.evidence_quality}."},
+        {"q": "What is the likely workflow problem?", "a": (confirmed[0].statement if confirmed else problems[0].statement) if problems else "Not identified yet."},
+        {"q": "Is that problem verified or hypothetical?", "a": "Confirmed by the buyer." if confirmed else "Hypothesis — not confirmed by the buyer."},
+        {"q": "Why is Inferago a possible fit?", "a": sol.get("why") or "Not established."},
+        {"q": "What needs clarification?", "a": "; ".join((agent.get("open_questions") or []) + sol.get("confirm_with_buyer", [])[:3])
+             + (f" Also unverified: {', '.join(open_gates)}." if open_gates else "") or "—"},
+        {"q": "Who can be contacted legitimately?", "a": "; ".join(who) or "No public business contact found yet."},
+        {"q": "What should the founder ask first?", "a": agent.get("first_question") or (sol.get("confirm_with_buyer") or ["How do you handle this today?"])[0]},
+    ]
 
 
 def prescore(c: Company) -> float:

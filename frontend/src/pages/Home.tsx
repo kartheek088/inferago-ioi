@@ -1,13 +1,16 @@
 import { Link } from "react-router-dom";
-import { ArrowRight, BellRing, Compass, IndianRupee, Radio, Users } from "lucide-react";
+import { ArrowRight, BellRing, Compass, IndianRupee, Send, Users } from "lucide-react";
 import { Badge, Button, Card, Empty, ErrorState, Spinner, Stat } from "../components/ui";
 import { ProspectCard } from "../components/prospect";
 import { api } from "../lib/api";
 import { useQuery } from "../lib/hooks";
-import { ago, greeting, rupees } from "../lib/format";
+import { ago, date, duration, greeting, rupees } from "../lib/format";
+import { AIChip } from "../components/intel";
 import type { CompanyCard, Job, Revenue } from "../lib/types";
 
 interface HomeData {
+  engine: { running: boolean; job: Job | null }; awaiting_approval: number; ai: { configured: boolean };
+  strong_signals: { company_id: number; company: string; label: string; date: string | null; url: string | null; confirmed: boolean }[];
   stats: { qualified: number; new_signals: number; follow_ups_due: number; collected_this_month: number };
   goal: number; best: CompanyCard[]; revenue: Revenue; last_job: Job | null;
   tasks: { leads_to_review: number; signals_to_check: number; follow_ups_due: { company_id: number; name: string; due: string }[];
@@ -27,7 +30,7 @@ export default function Home() {
         <div className="mt-6 space-y-6">
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
             <Stat label="Qualified prospects" value={d.stats.qualified} hint="Pass every check" icon={<Users className="h-4 w-4" />} tone="brand" />
-            <Stat label="New buying signals" value={d.stats.new_signals} hint="Last 7 days" icon={<Radio className="h-4 w-4" />} tone="info" />
+            <Stat label="Awaiting your approval" value={d.awaiting_approval} hint="Ready to approach" icon={<Send className="h-4 w-4" />} tone="info" />
             <Stat label="Follow-ups due" value={d.stats.follow_ups_due} icon={<BellRing className="h-4 w-4" />} tone="warn" />
             <Stat label="Collected this month" value={rupees(d.stats.collected_this_month)} hint={d.goal ? `Goal ${rupees(d.goal)}` : undefined} icon={<IndianRupee className="h-4 w-4" />} tone="ok" />
           </div>
@@ -37,7 +40,7 @@ export default function Home() {
               <div className="flex items-start gap-4">
                 <span className="hidden h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-brand text-brand-fg sm:flex"><Compass className="h-6 w-6" /></span>
                 <div>
-                <h2 className="text-lg font-semibold">Find Chennai Business Opportunities</h2>
+                <h2 className="text-lg font-semibold">Find Chennai Prospects</h2>
                 <p className="mt-1 text-sm text-subtle">Equipment Sales & Service · Wholesale Distribution · Chennai</p>
                 <p className="mt-1 text-xs text-subtle">
                   {d.last_job ? <>Last run {ago(d.last_job.finished_at ?? d.last_job.created_at)} — <span className="capitalize">{d.last_job.status}</span></> : "No discovery run yet"}
@@ -45,7 +48,7 @@ export default function Home() {
                 </div>
               </div>
               <div className="flex flex-wrap gap-2">
-                <Link to="/discover"><Button variant="primary" size="lg"><Compass className="h-5 w-5" />{running ? "View progress" : "Start Discovery"}</Button></Link>
+                <Link to="/discover"><Button variant="primary" size="lg"><Compass className="h-5 w-5" />{running ? "View progress" : "Find Chennai Prospects"}</Button></Link>
                 <Link to="/settings?tab=discovery"><Button variant="ghost">Discovery settings</Button></Link>
               </div>
             </div>
@@ -65,6 +68,23 @@ export default function Home() {
               ) : d.best.map((c) => <ProspectCard key={c.id} c={c} />)}
             </div>
             <div className="space-y-6">
+              <Card title="Engine status" action={<AIChip compact />}>
+                {d.engine.job ? (
+                  <div className="text-sm">
+                    <div className="flex items-center gap-2"><span className={`h-2 w-2 rounded-full ${d.engine.running ? "animate-pulse bg-brand" : d.engine.job.status === "completed" ? "bg-ok" : "bg-warn"}`} />
+                      Run #{d.engine.job.id} · <span className="capitalize">{d.engine.job.status}</span> · {duration(d.engine.job.elapsed_s)}</div>
+                    <p className="mt-1 text-xs text-subtle">{d.engine.job.log.slice(-1)[0]}</p>
+                  </div>
+                ) : <p className="text-sm text-subtle">No discovery run yet.</p>}
+              </Card>
+              <Card title="Recent strong signals" description="Confirmed by you, or dated in the last 30 days.">
+                {d.strong_signals.length === 0 ? <p className="text-sm text-subtle">None yet.</p> : (
+                  <ul className="space-y-2 text-sm">{d.strong_signals.map((x, i) => (
+                    <li key={i}><Link to={`/prospects/${x.company_id}`} className="font-medium text-fg">{x.company}</Link>
+                      <div className="text-xs text-subtle">{x.label} · {x.date ? date(x.date) : "date unknown"}{x.confirmed ? " · confirmed" : ""}</div></li>
+                  ))}</ul>
+                )}
+              </Card>
               <Card title="My tasks">
                 <ul className="space-y-2 text-sm">
                   <Task to="/prospects" n={d.tasks.leads_to_review} label="leads awaiting review" />

@@ -6,6 +6,7 @@ export const card: CompanyCard = {
   qualification_reasons: ["Passes every gate"], score: 72, friction: "low", review_status: "shortlisted", buying_intent: "indirect",
   offer: "ServiceFlow Setup", next_action: "Review and approve for outreach.", latest_signal: { label: "New service centre / warehouse / branch", date: "2026-11-02", url: "https://n.example", confirmed: false },
   website: "https://x.example", research_level: "website", has_contact: true, official_contact: true, sources: 3, sales_ready: true, next_follow_up_at: null, is_test: true,
+  operational_fit: "strong", evidence_quality: "partial", commercial_readiness: "unknown", ai_status: "partial", researched_at: "2026-11-20T10:00:00",
 };
 
 export const detail: CompanyDetail = {
@@ -31,14 +32,26 @@ export const detail: CompanyDetail = {
   ],
   contacts: [{ kind: "email", value: "service@x.example", source_url: "https://x.example/contact", official: true }],
   locations: [], activities: [], deal: null,
+  people: [{ id: 1, name: "R. Kumar", role: "Managing Director", role_group: "leadership", excerpt: "Our Managing Director, R. Kumar, leads 15 service engineers",
+    source_url: "https://x.example/about", published_contact: null, detected_by: "rule", verified_at: "2026-11-20T10:00:00" }],
+  scope_confirmed: false, research_error_kind: null, research_retry_after: null, ai_researched_at: "2026-11-20T10:00:00",
+  agent_events: [
+    { id: 1, session: "s1", company_id: 7, job_id: null, step: 1, kind: "tool", tool: "fetch_official_company_page", args: { url: "/about" }, status: "ok",
+      message: "Checked official company page /about", model: null, duration_ms: 900, tokens_in: null, tokens_out: null, cost_usd: null, at: "2026-11-20T10:00:00" },
+    { id: 2, session: "s1", company_id: 7, job_id: null, step: 2, kind: "tool", tool: "record_fact", args: {}, status: "rejected",
+      message: "Rejected an unsupported claim (quote not found on the page)", model: null, duration_ms: 1, tokens_in: null, tokens_out: null, cost_usd: null, at: "2026-11-20T10:00:01" },
+  ],
+  dossier: { answers: [{ q: "Why was this company found?", a: "Found via a public business directory." }, { q: "Is that problem verified or hypothetical?", a: "Hypothesis — not confirmed by the buyer." }],
+    agent: { outcome: "partial", summary: "Service-heavy lab equipment firm.", open_questions: ["How are AMC visits scheduled?"], first_question: null, stop_reason: null,
+      model_calls: 4, tool_calls: 6, tokens: 9000, cost_usd: 0.004, at: "2026-11-20T10:00:00" } },
   outreach: { message: "Hello Test Biomedical Services team, …", edited: false, contact_role: "Service manager or owner", questions: ["How are AMC renewals tracked?"], notice: "IOI never sends messages." },
 };
 
 export const job: Job = {
   id: 3, mode: "balanced", status: "running", stage: "research", stage_index: 5,
   stages: ["Finding businesses", "Checking Chennai locations", "Checking industry relevance", "Looking for operational signals", "Researching promising candidates", "Preparing qualified prospects"].map((label, i) => ({ key: `s${i}`, label })),
-  counters: { processed: 18, total: 50, accepted: 12, rejected_outside_total: 4, chain_outlets_total: 1, pending: 9 },
+  counters: { run: { reviewed: 18, to_review: 50, added: 12, duplicates: 1, researched: 3 }, pool: { unseen_relevant: 900, outside_city: 95, chain_outlets: 28 }, campaign: { companies: 40, needs_verification: 30 } },
   sources: { overture_places: { status: "done", records: 12 }, official_websites: { status: "running" }, news_rss: { status: "failed", error: "1 feed failed" } },
   params: {}, summary: {}, log: ["10:00:00 Queued (balanced)", "10:00:01 Researched 3 of 10: X — P2"], error: null, trigger: "manual", retry_of_id: null,
-  created_at: "2026-11-23T10:00:00", started_at: "2026-11-23T10:00:00", finished_at: null, heartbeat_at: "2026-11-23T10:00:05",
+  created_at: "2026-11-23T10:00:00", started_at: "2026-11-23T10:00:00", finished_at: null, heartbeat_at: "2026-11-23T10:00:05", elapsed_s: 95, last_success: "10:01:30 Researched 3 of 10",
 };

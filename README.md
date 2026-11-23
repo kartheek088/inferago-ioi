@@ -80,23 +80,41 @@ and restart. Keys stay in `.env` and are never shown in the app.
 
 ## 5. Find businesses
 
-Go to **Discover** and click **Start Discovery**. Choose a depth:
+Go to **Discover** and click **Find Chennai Prospects**. Choose a research mode:
 
 - **Quick**: directory only. Checks location and industry; visits no websites.
-- **Balanced** (recommended): also reads news and researches the most promising websites.
-- **Deep**: reads more pages per site and uses AI if it's configured.
+- **Balanced** (recommended): also reads news and researches the most promising websites (4 at a time; pages are cached).
+- **Deep**: reads more pages per site, then the **AI research agent** investigates the strongest candidates, if AI is configured.
 
-You can watch each stage as it runs and leave the page meanwhile. **Stop** finishes the current item and
-keeps everything already done. **Retry** reruns a run that failed or was interrupted, or only the sources that failed.
+You can watch each stage as it runs and leave the page meanwhile. The numbers come in three labelled groups:
+**This run**, **Directory file** and **Campaign totals**. The **AI research activity** panel shows each real step
+the agent took, such as pages read, facts found and claims it rejected. **Stop** finishes the current item and keeps
+everything already done. **Retry** reruns a failed or interrupted run, or only the sources that failed. If this
+computer loses its internet connection, research stops with a plain message instead of blaming the companies.
 
-## 6. Review prospects
+The AI status ("AI connected" or "AI unavailable — rule-based research active") is shown on Discover, Home and
+Research. Usage, cost and the last error are in **Settings → AI**. The AI only reads public pages on the company's own
+website, keeps only facts it can quote word-for-word, and never contacts anyone.
+
+## 6. Review prospects and dossiers
 
 Go to **Prospects**. The tabs are:
 
-- **Ready to Review**: passed every check. Up to your daily limit, 5 by default.
-- **High-Fit**: P0 and P1.
-- **Watchlist**: relevant, but needs one more check or a buying signal.
-- **All Businesses**.
+- **Ready to approach**: passed every check. Up to your daily limit, 5 by default.
+- **Strong prospects**: P0/P1, or passed every check.
+- **Watchlist**: ones you moved there.
+- **Needs verification**: relevant, but a check is still open (address, activity, size…).
+- **Approved**, **All** and **Excluded**.
+
+**Research** lists every company dossier and research run.
+
+A dossier has:
+- separate ratings for operational fit, buying intent, commercial readiness, sales friction and evidence quality;
+- answers to "why this company / what's verified / who to contact / what to ask first";
+- management contacts the company itself publishes;
+- testimonials, which are labelled as published by the company itself;
+- software they might already use instead;
+- the AI research trace, with **Research with AI** / **Retry AI research**.
 
 Open a business to see what it does, why it fits, every source with its date, and the suggested offer:
 ServiceFlow, OrderFlow, Integration Fix or Small Automation. Each fact is labelled:

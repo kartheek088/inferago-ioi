@@ -53,6 +53,8 @@ class Snapshot:
     research_level: str = "directory"
     legal_form: str | None = None  # limited | private_limited | small_firm | None
     branch_count: int | None = None
+    scope_confirmed: bool = False  # owner checked it isn't a large-enterprise procurement target
+    official_facts: int = 0  # source-verified facts from the official website
 
 
 def _age(dt: datetime | None, now: datetime) -> int | None:
@@ -101,8 +103,17 @@ def gates(s: Snapshot) -> list[dict]:
         ct = (None, "No public business contact found yet")
     g.append({"key": "contact", "label": "Legitimate public contact route", "passed": ct[0], "detail": ct[1]})
 
-    g.append({"key": "no_blocker", "label": "No known disqualifying requirement",
-              "passed": False if s.disqualifier else True, "detail": s.disqualifier or "None known"})
+    if s.disqualifier:
+        sc = (False, s.disqualifier)
+    elif s.scope_confirmed:
+        sc = (True, "Confirmed by you as a realistic size for Inferago")
+    elif s.legal_form == "limited":
+        sc = (None, "Public limited company — check it isn't a large enterprise with formal procurement")
+    elif s.branch_count and s.branch_count >= 20:
+        sc = (None, f"{s.branch_count} branches — check it isn't a large enterprise")
+    else:
+        sc = (True, "No sign of enterprise-scale procurement or a known blocker")
+    g.append({"key": "scope", "label": "Practical delivery scope", "passed": sc[0], "detail": sc[1]})
     return g
 
 
@@ -127,10 +138,11 @@ def recent_triggers(s: Snapshot, now: datetime) -> list[SignalView]:
 
 
 def buying_intent(s: Snapshot, now: datetime) -> str:
+    """confirmed (buyer told you) | explicit_public (a confirmed public request) | indirect | unknown."""
     if s.buyer_confirmed_problems:
-        return "buyer_confirmed"
+        return "confirmed"
     if intent_evidence(s):
-        return "explicit"
+        return "explicit_public"
     if any(x.review_status != "rejected" for x in s.signals):
         return "indirect"
     return "unknown"
@@ -263,6 +275,14 @@ _OPS_TEXT = {
 
 
 def recommend(s: Snapshot) -> dict:
+    from app.ioi3.solutions import alternatives
+
+    out = _recommend(s)
+    out["existing_software"] = alternatives(s.industry, s.tools)
+    return out
+
+
+def _recommend(s: Snapshot) -> dict:
     known = [_OPS_TEXT[k] for k in sorted(s.workflow_keys) if k in _OPS_TEXT]
     known_text = ("Seen in sources: " + ", ".join(known)) if known else "Not known yet — only directory information so far"
     tools_note = f" They mention {', '.join(sorted(s.tools))}." if s.tools else ""
@@ -324,7 +344,39 @@ def next_action(category: str, gs: list[dict], s: Snapshot) -> str:
                 "workflow": "Research further: look for service/distribution workflow on their website.",
                 "active": "Check for recent activity (news, updates, dated posts).",
                 "contact": "Find a public business phone or email on their website.",
+                "scope": "Check the company's size: if it's a realistic client (not a large enterprise), mark it so in Correct details.",
             }.get(x["key"], "Research further.")
     if category in ("P0", "P1"):
         return "Review and approve for outreach."
     return "Look for a current need, or approve for a low-pressure introduction."
+
+
+# ------------------------------------------------------------------------------------------------
+# Separate classifications (never combined into a win probability)
+# ------------------------------------------------------------------------------------------------
+def operational_fit(s: Snapshot) -> str:
+    rel = WORKFLOW_KEYS.get(s.industry or "", set()) & s.workflow_keys
+    if s.industry is None:
+        return "weak"
+    if s.research_level == "directory" and not rel:
+        return "unknown"
+    return "strong" if len(rel) >= 3 else "moderate" if rel else "weak"
+
+
+def commercial_readiness(s: Snapshot, now: datetime) -> str:
+    """buyer_confirmed | limited_public (public signals + relevant operations) | unknown. Never inferred from popularity."""
+    if s.buyer_confirmed_problems:
+        return "buyer_confirmed"
+    rel = WORKFLOW_KEYS.get(s.industry or "", set()) & s.workflow_keys
+    if rel and recent_triggers(s, now):
+        return "limited_public"
+    return "unknown"
+
+
+def evidence_quality(s: Snapshot) -> str:
+    researched = s.research_level != "directory"
+    if s.location_confidence == "verified" and researched and s.official_facts >= 3 and s.activity == "active":
+        return "strong"
+    if researched or s.location_confidence == "verified":
+        return "partial"
+    return "weak"

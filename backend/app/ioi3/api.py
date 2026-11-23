@@ -75,6 +75,8 @@ def card(c: Company) -> dict[str, Any]:
         "has_contact": bool(c.contacts), "official_contact": any(x.official for x in c.contacts),
         "sources": len({f.source_url for f in c.facts if f.source_url}), "sales_ready": qualify.sales_ready(c.gates or []),
         "next_follow_up_at": c.next_follow_up_at, "is_test": c.is_test,
+        "operational_fit": c.operational_fit, "evidence_quality": c.evidence_quality, "commercial_readiness": c.commercial_readiness,
+        "ai_status": c.ai_status, "researched_at": c.researched_at,
     }
 
 
@@ -116,6 +118,11 @@ def detail(db: Session, c: Company) -> dict[str, Any]:
         "activities": [{"id": a.id, "kind": a.kind, "summary": a.summary, "channel": a.channel, "actor": a.actor,
                         "occurred_at": a.occurred_at} for a in acts],
         "deal": deal_out(deal) if deal else None,
+        "people": [{"id": p.id, "name": p.name, "role": p.role, "role_group": p.role_group, "excerpt": p.excerpt, "source_url": p.source_url,
+                    "published_contact": p.published_contact, "detected_by": p.detected_by, "verified_at": p.verified_at} for p in c.people],
+        "dossier": c.dossier or {}, "scope_confirmed": c.scope_confirmed, "research_error_kind": c.research_error_kind,
+        "research_retry_after": c.research_retry_after, "ai_researched_at": c.ai_researched_at,
+        "agent_events": agent_events(db, company_id=c.id, latest_session=True),
         "outreach": sales.draft(c, biz.get("sender_name", ""), biz.get("sender_link", "")),
     }
 
@@ -125,7 +132,9 @@ def job_out(j: Job) -> dict[str, Any]:
             "stages": [{"key": k, "label": v} for k, v in engine.STAGES], "counters": j.counters, "sources": j.sources,
             "params": j.params, "summary": j.summary, "log": (j.log or [])[-60:], "error": j.error, "trigger": j.trigger,
             "retry_of_id": j.retry_of_id, "created_at": j.created_at, "started_at": j.started_at, "finished_at": j.finished_at,
-            "heartbeat_at": j.heartbeat_at}
+            "heartbeat_at": j.heartbeat_at,
+            "elapsed_s": int(((j.finished_at or utcnow()) - j.started_at).total_seconds()) if j.started_at else None,
+            "last_success": (j.summary or {}).get("last_success")}
 
 
 # ------------------------------------------------------------------------------------------------
@@ -239,7 +248,16 @@ def home(db: Session = DB):
     best = sorted([c for c in live if c.review_status in ("approved", "shortlisted")],
                   key=lambda c: (order[c.review_status], {"P0": 0, "P1": 1, "P2": 2}.get(c.qualification, 3), -c.score))[:5]
     last = db.scalar(select(Job).where(Job.campaign_id == camp.id).order_by(Job.id.desc()))
+    recent = utcnow() - timedelta(days=30)
+    strong = db.execute(select(Fact, Company.name).join(Company).where(
+        Company.campaign_id == camp.id, Company.archived.is_(False), Fact.kind == "signal", Fact.review_status != "rejected",
+        or_(Fact.review_status == "confirmed", Fact.published_at >= recent)).order_by(Fact.published_at.desc().nulls_last()).limit(5)).all()
     return {
+        "engine": {"running": bool(last and last.status in engine.ACTIVE), "job": job_out(last) if last else None},
+        "awaiting_approval": sum(1 for c in live if c.review_status == "shortlisted"),
+        "strong_signals": [{"company_id": f.company_id, "company": name, "label": SIGNAL_LABEL.get(f.key or "", f.statement),
+                            "date": f.published_at, "url": f.source_url, "confirmed": f.review_status == "confirmed"} for f, name in strong],
+        "ai": {"configured": get_settings().ai_enabled},
         "stats": {"qualified": len(qualified), "new_signals": new_signals, "follow_ups_due": len(t["follow_ups_due"]),
                   "collected_this_month": rev["collected_this_month"]},
         "goal": _business(db)["revenue_goal_monthly"],
@@ -334,9 +352,36 @@ def retry(job_id: int, db: Session = DB, who: str = Depends(actor)):
 # ------------------------------------------------------------------------------------------------
 # Prospects
 # ------------------------------------------------------------------------------------------------
+TABS = ("ready", "strong", "watchlist", "verify", "approved", "excluded", "all")
+
+
+def _tab_of(c: Company) -> set[str]:
+    ready = qualify.sales_ready(c.gates or [])
+    t = {"all"}
+    if c.review_status == "shortlisted":
+        t.add("ready")
+    if c.review_status == "approved":
+        t.add("approved")
+    if c.qualification == "P3" or c.review_status in ("rejected", "duplicate"):
+        t.add("excluded")
+        return t
+    if c.qualification in ("P0", "P1") or ready:
+        t.add("strong")
+    if c.review_status == "watchlist":
+        t.add("watchlist")
+    if not ready and c.review_status in ("new", "watchlist"):
+        t.add("verify")
+    return t
+
+
+def _latest_signal_age(c: Company) -> float:
+    dates = [f.published_at for f in c.facts if f.kind == "signal" and f.review_status != "rejected" and f.published_at]
+    return -max(dates).timestamp() if dates else 0.0
+
+
 @router.get("/companies")
 def companies(
-    tab: str = Query("ready", pattern="^(ready|high_fit|watchlist|all|rejected|approved)$"),
+    tab: str = Query("ready", pattern="^(ready|strong|watchlist|verify|approved|excluded|all|high_fit|rejected)$"),
     industry: str | None = Query(None, pattern=f"^({EQUIPMENT}|{WHOLESALE})$"),
     qualification: str | None = Query(None, pattern="^P[0-3]$"),
     confidence: str | None = Query(None, pattern="^(verified|partial|unknown)$"),
@@ -349,19 +394,11 @@ def companies(
     limit: int = Query(25, ge=1, le=200),
     db: Session = DB,
 ):
+    tab = {"high_fit": "strong", "rejected": "excluded"}.get(tab, tab)
     camp = core.active_campaign(db)
     stmt = select(Company).where(Company.campaign_id == camp.id, Company.archived.is_(False))
     if not include_test:
         stmt = stmt.where(Company.is_test.is_(False))
-    stmt = {
-        "ready": stmt.where(Company.review_status == "shortlisted"),
-        "high_fit": stmt.where(Company.qualification.in_(("P0", "P1")), Company.review_status.notin_(("rejected", "duplicate"))),
-        "watchlist": stmt.where(or_(Company.review_status == "watchlist",
-                                    and_(Company.qualification == "P2", Company.review_status == "new"))),
-        "approved": stmt.where(Company.review_status == "approved"),
-        "rejected": stmt.where(or_(Company.review_status.in_(("rejected", "duplicate")), Company.qualification == "P3")),
-        "all": stmt,
-    }[tab]
     if industry:
         stmt = stmt.where(Company.industry == industry)
     if qualification:
@@ -379,26 +416,20 @@ def companies(
                                               Fact.published_at >= since)))
     if q:
         stmt = stmt.where(or_(Company.name.ilike(f"%{q}%"), Company.locality.ilike(f"%{q}%")))
-    total = db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
-    rows = db.scalars(stmt.options(selectinload(Company.facts), selectinload(Company.contacts))
-                      .order_by(Company.qualification, Company.score.desc(), Company.id).offset(offset).limit(limit)).all()
-    return {"items": [card(c) for c in rows], "total": total, "offset": offset, "limit": limit}
+    rows = [c for c in db.scalars(stmt.options(selectinload(Company.facts), selectinload(Company.contacts))) if tab in _tab_of(c)]
+    order = {"P0": 0, "P1": 1, "P2": 2, "P3": 3}
+    rows.sort(key=lambda c: (order.get(c.qualification, 9), not qualify.sales_ready(c.gates or []), _latest_signal_age(c), -c.score, c.id))
+    return {"items": [card(c) for c in rows[offset: offset + limit]], "total": len(rows), "offset": offset, "limit": limit}
 
 
 @router.get("/companies/counts")
 def counts(db: Session = DB):
     camp = core.active_campaign(db)
-    base = select(func.count()).select_from(Company).where(Company.campaign_id == camp.id, Company.archived.is_(False),
-                                                           Company.is_test.is_(False))
-    return {
-        "ready": db.scalar(base.where(Company.review_status == "shortlisted")) or 0,
-        "high_fit": db.scalar(base.where(Company.qualification.in_(("P0", "P1")), Company.review_status.notin_(("rejected", "duplicate")))) or 0,
-        "watchlist": db.scalar(base.where(or_(Company.review_status == "watchlist",
-                                              and_(Company.qualification == "P2", Company.review_status == "new")))) or 0,
-        "approved": db.scalar(base.where(Company.review_status == "approved")) or 0,
-        "rejected": db.scalar(base.where(or_(Company.review_status.in_(("rejected", "duplicate")), Company.qualification == "P3"))) or 0,
-        "all": db.scalar(base) or 0,
-    }
+    out = {t: 0 for t in TABS}
+    for c in db.scalars(select(Company).where(Company.campaign_id == camp.id, Company.archived.is_(False), Company.is_test.is_(False))):
+        for t in _tab_of(c):
+            out[t] += 1
+    return out
 
 
 @router.get("/companies/{cid}")
@@ -501,6 +532,7 @@ def review(cid: int, action: str, body: ReviewIn | None = None, db: Session = DB
 
 
 class CompanyPatch(BaseModel):
+    scope_confirmed: bool | None = None
     activity_evidence: str | None = Field(None, max_length=500)  # how the owner confirmed they're operating
     website: str | None = Field(None, max_length=2048)
     disqualifier: str | None = Field(None, max_length=1000)
@@ -518,6 +550,8 @@ def patch_company(cid: int, body: CompanyPatch, db: Session = DB, who: str = Dep
         c.domain = domain_of(c.website) if c.website else None
     if "disqualifier" in data:
         c.disqualifier = data["disqualifier"] or None
+    if data.get("scope_confirmed") is not None:
+        c.scope_confirmed = bool(data["scope_confirmed"])
     if data.get("activity_evidence"):
         c.activity = "active"
         core.add_fact(c, kind="activity", key="owner_confirmed", state="source_verified", detected_by="owner", reliability="high",
@@ -949,3 +983,100 @@ def directory_download(db: Session = DB, who: str = Depends(actor)):
     db.commit()
     jobs.submit_overture(run.id, "download", folder=str(collect.MAPS_DIR))
     return {"ok": True, "message": "Download started. It runs in the background (10–40 minutes)."}
+
+
+# ------------------------------------------------------------------------------------------------
+# AI status, agent trace, research history
+# ------------------------------------------------------------------------------------------------
+def agent_events(db: Session, *, company_id: int | None = None, job_id: int | None = None, latest_session: bool = False,
+                 limit: int = 200) -> list[dict]:
+    from app.ioi3.models import AgentEvent
+
+    stmt = select(AgentEvent)
+    if company_id is not None:
+        stmt = stmt.where(AgentEvent.company_id == company_id)
+        if latest_session:
+            last = db.scalar(select(AgentEvent.session).where(AgentEvent.company_id == company_id).order_by(AgentEvent.id.desc()))
+            if last is None:
+                return []
+            stmt = stmt.where(AgentEvent.session == last)
+    if job_id is not None:
+        stmt = stmt.where(AgentEvent.job_id == job_id)
+    rows = db.scalars(stmt.order_by(AgentEvent.id.desc()).limit(limit)).all()
+    return [{"id": e.id, "session": e.session, "company_id": e.company_id, "job_id": e.job_id, "step": e.step, "kind": e.kind, "tool": e.tool,
+             "args": e.args, "status": e.status, "message": e.message, "model": e.model, "duration_ms": e.duration_ms,
+             "tokens_in": e.tokens_in, "tokens_out": e.tokens_out, "cost_usd": e.cost_usd, "at": e.created_at} for e in reversed(rows)]
+
+
+@router.get("/ai/status")
+def ai_status(db: Session = DB):
+    from app.ioi3 import agent
+    from app.models import AIUsageLog
+
+    s = get_settings()
+    base = select(AIUsageLog).where(AIUsageLog.task.like("ioi3_%"))
+    last_ok = db.scalar(base.where(AIUsageLog.success.is_(True)).order_by(AIUsageLog.id.desc()))
+    last_err = db.scalar(base.where(AIUsageLog.success.is_(False)).order_by(AIUsageLog.id.desc()))
+
+    def totals(days: int) -> dict:
+        since = utcnow() - timedelta(days=days)
+        r = db.execute(select(func.count(), func.coalesce(func.sum(AIUsageLog.prompt_tokens), 0), func.coalesce(func.sum(AIUsageLog.completion_tokens), 0),
+                              func.coalesce(func.sum(AIUsageLog.cost_usd), 0.0))
+                       .where(AIUsageLog.task.like("ioi3_%"), AIUsageLog.success.is_(True), AIUsageLog.created_at >= since)).one()
+        return {"calls": r[0], "tokens_in": int(r[1]), "tokens_out": int(r[2]), "cost_usd": round(float(r[3]), 4)}
+
+    provider = "Claude (Anthropic)" if s.claude_enabled else "OpenRouter" if s.ai_enabled else None
+    return {
+        "configured": s.ai_enabled, "provider": provider, "model": s.ai_model_name,
+        "agent_supported": s.ai_enabled and not s.claude_enabled,
+        "note": None if s.ai_enabled and not s.claude_enabled else
+                ("The research agent uses OpenRouter function calling; with only an Anthropic key, AI extraction works but the agent is off."
+                 if s.claude_enabled else "AI unavailable — rule-based research active."),
+        "last_success": {"at": last_ok.created_at, "task": last_ok.task, "model": last_ok.model} if last_ok else None,
+        "last_error": {"at": last_err.created_at, "task": last_err.task, "error": (last_err.error or "")[:200]} if last_err else None,
+        "fallback": "Rule-based research continues whenever AI is unavailable.",
+        "usage_24h": totals(1), "usage_30d": totals(30),
+        "limits": {k: v for k, v in agent.LIMITS.__dict__.items()},
+    }
+
+
+@router.get("/jobs/{job_id}/events")
+def job_events(job_id: int, db: Session = DB):
+    return agent_events(db, job_id=job_id, limit=300)
+
+
+@router.get("/companies/{cid}/agent-events")
+def company_events(cid: int, all_sessions: bool = False, db: Session = DB):
+    return agent_events(db, company_id=cid, latest_session=not all_sessions)
+
+
+@router.post("/companies/{cid}/ai-research")
+def ai_research(cid: int, db: Session = DB, who: str = Depends(actor)):
+    """Run the bounded AI research agent on one business now (takes up to ~2 minutes). Read-only; sends nothing."""
+    from app.ioi3 import agent
+
+    c = _company(db, cid)
+    out = agent.investigate(db, c)
+    sales.log(db, c, "note", f"AI research: {out.outcome} ({out.model_calls} AI calls, {out.facts} facts, {out.people} people)", actor=who)
+    db.commit()
+    return detail(db, _company(db, cid))
+
+
+@router.get("/research")
+def research_history(q: str | None = None, ai: str | None = Query(None, pattern="^(done|partial|unavailable|failed|not_run)$"),
+                     offset: int = Query(0, ge=0), limit: int = Query(30, ge=1, le=200), db: Session = DB):
+    camp = core.active_campaign(db)
+    stmt = select(Company).where(Company.campaign_id == camp.id, Company.archived.is_(False),
+                                 or_(Company.research_level != "directory", Company.ai_status != "not_run", Company.researched_at.is_not(None)))
+    if q:
+        stmt = stmt.where(Company.name.ilike(f"%{q}%"))
+    if ai:
+        stmt = stmt.where(Company.ai_status == ai)
+    total = db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
+    rows = db.scalars(stmt.options(selectinload(Company.facts), selectinload(Company.contacts), selectinload(Company.people))
+                      .order_by(func.coalesce(Company.ai_researched_at, Company.researched_at).desc()).offset(offset).limit(limit)).all()
+    jobs = db.scalars(select(Job).where(Job.campaign_id == camp.id).order_by(Job.id.desc()).limit(15)).all()
+    return {"total": total, "items": [{**card(c), "people": len(c.people), "testimonials": sum(1 for f in c.facts if f.kind == "testimonial"),
+                                       "research_error": c.research_error, "ai_researched_at": c.ai_researched_at,
+                                       "agent_outcome": ((c.dossier or {}).get("agent") or {}).get("outcome")} for c in rows],
+            "jobs": [job_out(j) for j in jobs]}

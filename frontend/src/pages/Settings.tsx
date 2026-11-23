@@ -5,6 +5,9 @@ import { Badge, Button, Card, ErrorState, Field, Input, Modal, Msg, Notice, Page
 import { api, getToken } from "../lib/api";
 import { useAction, useQuery } from "../lib/hooks";
 import { ago, date } from "../lib/format";
+import { AIChip } from "../components/intel";
+import { useTheme } from "../components/Shell";
+import type { AIStatus } from "../lib/types";
 import type { Job } from "../lib/types";
 
 type Tab = "business" | "discovery" | "ai" | "data" | "advanced";
@@ -36,7 +39,7 @@ export default function Settings() {
         value={tab} onChange={(t) => setSp({ tab: t })} />
       <div className="mt-6">
         <ErrorState error={s.error} onRetry={s.reload} />
-        {!s.data ? <Spinner /> : tab === "business" ? <Business s={s.data} onSaved={s.setData} />
+        {!s.data ? <Spinner /> : tab === "business" ? <div className="space-y-6"><Business s={s.data} onSaved={s.setData} /><Appearance /></div>
           : tab === "discovery" ? <Discovery s={s.data} onSaved={s.setData} />
           : tab === "ai" ? <AI s={s.data} onSaved={s.setData} />
           : tab === "data" ? <Data /> : <Advanced />}
@@ -132,7 +135,42 @@ function AI({ s, onSaved }: { s: SettingsData; onSaved: (x: SettingsData) => voi
         </div>
         {res && <Notice>{res}</Notice>}
         <Msg msg={act.msg} />
+        <AIDiagnostics />
       </div>
+    </Card>
+  );
+}
+
+function AIDiagnostics() {
+  const st = useQuery(() => api.get<AIStatus>("/ai/status"), []);
+  const d = st.data;
+  if (!d) return null;
+  const row = (k: string, v: React.ReactNode) => <div className="flex justify-between gap-3 border-t border-border py-1.5"><dt className="text-subtle">{k}</dt><dd className="text-right">{v}</dd></div>;
+  return (
+    <div>
+      <h3 className="mb-1 font-semibold">Diagnostics</h3>
+      <dl>
+        {row("Status", <AIChip />)}
+        {row("Provider · model", d.configured ? `${d.provider} · ${d.model}` : "—")}
+        {row("Last successful call", d.last_success ? `${date(d.last_success.at, true)} (${d.last_success.task})` : "never")}
+        {row("Last error", d.last_error ? `${date(d.last_error.at, true)}: ${d.last_error.error}` : "none")}
+        {row("Fallback", d.fallback)}
+        {row("Last 24 h", `${d.usage_24h.calls} calls · ${d.usage_24h.tokens_in + d.usage_24h.tokens_out} tokens · $${d.usage_24h.cost_usd.toFixed(4)}`)}
+        {row("Last 30 days", `${d.usage_30d.calls} calls · ${d.usage_30d.tokens_in + d.usage_30d.tokens_out} tokens · $${d.usage_30d.cost_usd.toFixed(4)}`)}
+        {row("Agent limits per company", `${d.limits.max_model_calls} AI calls · ${d.limits.max_tool_calls} tools · ${d.limits.max_pages} pages · ${d.limits.max_seconds}s · $${d.limits.max_cost_usd}`)}
+      </dl>
+      {d.note && <p className="mt-2 text-xs text-subtle">{d.note}</p>}
+    </div>
+  );
+}
+
+function Appearance() {
+  const [dark, toggle] = useTheme();
+  return (
+    <Card title="Appearance">
+      <div className="flex items-center justify-between text-sm"><span>Theme: <strong>{dark ? "Dark (default)" : "Light"}</strong></span>
+        <Button size="sm" onClick={toggle}>Switch to {dark ? "light" : "dark"}</Button></div>
+      <p className="mt-2 text-xs text-subtle">Saved in this browser.</p>
     </Card>
   );
 }
@@ -223,7 +261,7 @@ function Advanced() {
       </Card>
       <Card title="Job history">
         <ul className="space-y-2 text-sm">{jobs.data?.map((j) => (
-          <li key={j.id}><details><summary className="cursor-pointer">#{j.id} · {j.mode} · {j.status} · {date(j.created_at, true)} · {j.counters.accepted ?? 0} added{j.error ? ` · ${j.error.slice(0, 80)}` : ""}</summary>
+          <li key={j.id}><details><summary className="cursor-pointer">#{j.id} · {j.mode} · {j.status} · {date(j.created_at, true)} · {String(j.counters.run?.added ?? j.counters.accepted ?? 0)} added · {String(j.counters.run?.ai_calls ?? 0)} AI calls{j.error ? ` · ${j.error.slice(0, 80)}` : ""}</summary>
             <pre className="mt-2 max-h-48 overflow-auto rounded bg-muted p-2 text-xs">{j.log.join("\n")}</pre></details></li>
         ))}</ul>
       </Card>

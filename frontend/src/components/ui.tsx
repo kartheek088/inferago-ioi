@@ -76,7 +76,7 @@ export function Stat({ label, value, hint, icon, tone = "brand" }: { label: stri
       <div className="flex items-center gap-3">
         {icon && <span className={cn("flex h-9 w-9 shrink-0 items-center justify-center rounded-xl", chip[tone])}>{icon}</span>}
         <div className="min-w-0">
-          <div className="truncate text-xs font-medium uppercase tracking-wide text-subtle">{label}</div>
+          <div className="text-[11px] font-medium uppercase leading-tight tracking-wide text-subtle sm:text-xs">{label}</div>
           <div className="text-2xl font-semibold tabular-nums leading-tight">{value}</div>
         </div>
       </div>
