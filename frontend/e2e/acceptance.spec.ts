@@ -21,8 +21,8 @@ test("first run → discovery → prospect → outreach → reply → pipeline �
   // 3. Start a real discovery job (Quick: real Overture records, no internet) and watch progress
   await page.getByRole("link", { name: "Discover" }).first().click();
   await page.getByText("Quick", { exact: true }).click();
-  await page.getByLabel("New businesses (max)").fill("15");
-  await page.getByRole("button", { name: "Start Discovery" }).click();
+  await page.getByLabel("Candidate limit").fill("15");
+  await page.getByRole("button", { name: "Find Chennai Prospects" }).click();
   await expect(page.getByText("1. Finding businesses")).toBeVisible();
   await expect(page.getByText("completed", { exact: true }).first()).toBeVisible({ timeout: 120_000 });
   await expect(page.getByText(/businesses in this campaign/)).toBeVisible();
@@ -30,7 +30,7 @@ test("first run → discovery → prospect → outreach → reply → pipeline �
 
   // 4. Relevant Chennai businesses are listed
   await page.getByRole("link", { name: "Prospects" }).first().click();
-  await page.getByRole("tab", { name: /All Businesses/ }).click();
+  await page.getByRole("tab", { name: /^All/ }).click();
   await expect(page.getByTestId("prospect-card").first()).toBeVisible();
   const cards = await page.getByTestId("prospect-card").count();
   expect(cards).toBeGreaterThan(0);
@@ -101,8 +101,14 @@ test("first run → discovery → prospect → outreach → reply → pipeline �
   await expect(page.getByText("Source health")).toBeVisible();
   await page.screenshot({ path: "e2e/screens/settings-advanced.png", fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.getByRole("navigation", { name: "Main mobile" }).getByRole("link", { name: "Prospects" }).click();
-  await page.getByRole("button", { name: "Toggle dark mode" }).first().click();
-  await page.waitForTimeout(500);
+  await page.getByRole("navigation", { name: "Main mobile" }).getByRole("link", { name: "Leads" }).click();
+  await expect(page.locator("html")).toHaveClass(/dark/);  // dark is the default
+  await page.waitForTimeout(300);
   await page.screenshot({ path: "e2e/screens/mobile-dark-prospects.png", fullPage: false });
+  await page.getByRole("button", { name: "Toggle dark mode" }).first().click();
+  await expect(page.locator("html")).not.toHaveClass(/dark/);
+  await page.reload();
+  await expect(page.locator("html")).not.toHaveClass(/dark/);  // preference persisted
+  await page.waitForTimeout(300);
+  await page.screenshot({ path: "e2e/screens/mobile-light-prospects.png", fullPage: false });
 });

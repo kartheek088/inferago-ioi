@@ -3,15 +3,16 @@
 @tailwind utilities;
 
 :root {
-  --bg: 247 248 250;
+  /* Light theme (optional) */
+  --bg: 246 248 251;
   --surface: 255 255 255;
-  --muted: 241 243 246;
-  --border: 226 230 235;
-  --fg: 17 24 39;
-  --subtle: 92 102 117;
-  --brand: 37 99 235;
+  --muted: 240 243 247;
+  --border: 222 228 236;
+  --fg: 15 23 42;
+  --subtle: 84 96 115;
+  --brand: 13 148 136;
   --brand-fg: 255 255 255;
-  --brand-soft: 232 240 254;
+  --brand-soft: 224 245 242;
   --ok: 21 128 61;
   --warn: 180 83 9;
   --bad: 185 28 28;
@@ -19,19 +20,21 @@
   color-scheme: light;
 }
 .dark {
-  --bg: 14 17 22;
-  --surface: 22 26 33;
-  --muted: 30 35 44;
-  --border: 45 52 64;
-  --fg: 236 239 244;
-  --subtle: 160 169 184;
-  --brand: 96 145 255;
-  --brand-fg: 10 14 22;
-  --brand-soft: 30 41 66;
+  /* Default dark theme: background #0B1020, surface #151E30, elevated #1D2940, text #F8FAFC / #94A3B8,
+     accent #5EEAD4, borders #334155 */
+  --bg: 11 16 32;
+  --surface: 21 30 48;
+  --muted: 29 41 64;
+  --border: 51 65 85;
+  --fg: 248 250 252;
+  --subtle: 148 163 184;
+  --brand: 94 234 212;
+  --brand-fg: 11 16 32;
+  --brand-soft: 20 52 60;
   --ok: 74 222 128;
   --warn: 251 191 36;
   --bad: 248 113 113;
-  --info: 147 197 253;
+  --info: 125 180 255;
   color-scheme: dark;
 }
 html, body, #root { height: 100%; }

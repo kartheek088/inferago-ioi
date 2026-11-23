@@ -163,6 +163,16 @@ class Company(_Stamped, Base):
     duplicate_of_id: Mapped[int | None] = mapped_column(ForeignKey("ioi_companies.id", ondelete="SET NULL"))
     archived: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     is_test: Mapped[bool] = mapped_column(Boolean, default=False)  # synthetic data, never shown with production records
+    # 3.1 research engine
+    research_error_kind: Mapped[str | None] = mapped_column(String(20))  # retryable | permanent
+    research_retry_after: Mapped[datetime | None] = mapped_column(DateTime)
+    operational_fit: Mapped[str] = mapped_column(String(10), default="unknown")  # strong | moderate | weak | unknown
+    commercial_readiness: Mapped[str] = mapped_column(String(20), default="unknown")  # buyer_confirmed | limited_public | unknown
+    evidence_quality: Mapped[str] = mapped_column(String(10), default="weak")  # strong | partial | weak
+    scope_confirmed: Mapped[bool] = mapped_column(Boolean, default=False)  # owner confirmed it's not an enterprise-procurement target
+    ai_status: Mapped[str] = mapped_column(String(20), default="not_run")  # not_run | done | partial | unavailable | failed
+    ai_researched_at: Mapped[datetime | None] = mapped_column(DateTime)
+    dossier: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)  # explainability answers (deterministic)
 
     facts: Mapped[list["Fact"]] = relationship(back_populates="company", cascade="all, delete-orphan", passive_deletes=True,
                                                order_by="Fact.id")
@@ -170,6 +180,8 @@ class Company(_Stamped, Base):
                                                      order_by="CompanyContact.id")
     locations: Mapped[list["Location"]] = relationship(back_populates="company", cascade="all, delete-orphan", passive_deletes=True,
                                                        order_by="Location.id")
+    people: Mapped[list["Person"]] = relationship(back_populates="company", cascade="all, delete-orphan", passive_deletes=True,
+                                                  order_by="Person.id")
 
 
 class Location(Base):
@@ -218,6 +230,10 @@ class Fact(Base):
     detected_by: Mapped[str] = mapped_column(String(20), default="rule")  # rule | ai | owner | buyer
     review_status: Mapped[str | None] = mapped_column(String(20))  # signals only
     reviewed_by: Mapped[str | None] = mapped_column(String(100))
+    # Where it came from and who said it. Public content is evidence of what it states, not proof it's true.
+    source_type: Mapped[str | None] = mapped_column(String(30))  # directory | official_site | news | owner | buyer
+    account_type: Mapped[str | None] = mapped_column(String(30))  # company_published | third_party | owner | buyer
+    contradiction: Mapped[str | None] = mapped_column(Text)  # conflicting evidence, if any
 
     company: Mapped[Company] = relationship(back_populates="facts")
 
@@ -304,3 +320,68 @@ class Proposal(_Stamped, Base):
     amount: Mapped[int | None] = mapped_column(Integer)  # rupees, as quoted by the owner
     status: Mapped[str] = mapped_column(String(20), default="draft")  # draft | sent | accepted | declined
     sent_on: Mapped[date | None] = mapped_column(Date)
+
+
+class Person(Base):
+    """A publicly published business role (owner, MD, service manager…) on an official/public page.
+
+    Only professional facts that the page itself states, with the verbatim quote. A contact route is kept
+    only when published on the same page; nothing is guessed.
+    """
+
+    __tablename__ = "ioi_people"
+    __table_args__ = (UniqueConstraint("company_id", "name", "role", name="uq_ioi_person"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("ioi_companies.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String(200))
+    role: Mapped[str] = mapped_column(String(120))
+    role_group: Mapped[str] = mapped_column(String(30))  # owner | leadership | operations | service | sales | other
+    excerpt: Mapped[str] = mapped_column(Text)
+    source_url: Mapped[str] = mapped_column(String(2048))
+    published_contact: Mapped[str | None] = mapped_column(String(300))  # only if on the same page
+    detected_by: Mapped[str] = mapped_column(String(20), default="rule")  # rule | ai | owner
+    verified_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+    company: Mapped[Company] = relationship(back_populates="people")
+
+
+class PageCache(Base):
+    """Cached public page responses (respecting ETag / Last-Modified) to avoid repeated fetches."""
+
+    __tablename__ = "ioi_page_cache"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    url: Mapped[str] = mapped_column(String(2048), unique=True)
+    final_url: Mapped[str] = mapped_column(String(2048))
+    status_code: Mapped[int] = mapped_column(Integer)
+    content_type: Mapped[str | None] = mapped_column(String(200))
+    etag: Mapped[str | None] = mapped_column(String(300))
+    last_modified: Mapped[str | None] = mapped_column(String(100))
+    body: Mapped[str] = mapped_column(Text)
+    fetched_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
+    validated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class AgentEvent(Base):
+    """Audit trail of the research agent: every model step and tool call (arguments redacted)."""
+
+    __tablename__ = "ioi_agent_events"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    session: Mapped[str] = mapped_column(String(40), index=True)  # one research session (uuid)
+    job_id: Mapped[int | None] = mapped_column(ForeignKey("ioi_jobs.id", ondelete="SET NULL"), index=True)
+    company_id: Mapped[int | None] = mapped_column(ForeignKey("ioi_companies.id", ondelete="CASCADE"), index=True)
+    step: Mapped[int] = mapped_column(Integer, default=0)
+    kind: Mapped[str] = mapped_column(String(20))  # start | model | tool | finish | fallback | error | limit
+    tool: Mapped[str | None] = mapped_column(String(60))
+    args: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    status: Mapped[str] = mapped_column(String(20), default="ok")  # ok | rejected | failed | skipped
+    message: Mapped[str] = mapped_column(Text)  # plain-language description of what actually happened
+    model: Mapped[str | None] = mapped_column(String(120))
+    duration_ms: Mapped[int | None] = mapped_column(Integer)
+    tokens_in: Mapped[int | None] = mapped_column(Integer)
+    tokens_out: Mapped[int | None] = mapped_column(Integer)
+    cost_usd: Mapped[float | None] = mapped_column(Float)
+    evidence_ids: Mapped[list[int]] = mapped_column(JSON, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)

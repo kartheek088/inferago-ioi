@@ -8,7 +8,7 @@ import { useAction, useQuery } from "../lib/hooks";
 import { FRICTION, INDUSTRY } from "../lib/format";
 import type { CompanyCard } from "../lib/types";
 
-type Tab = "ready" | "high_fit" | "watchlist" | "all" | "approved" | "rejected";
+type Tab = "ready" | "strong" | "watchlist" | "verify" | "all" | "approved" | "excluded";
 interface Page { items: CompanyCard[]; total: number; offset: number; limit: number }
 
 export default function Prospects() {
@@ -31,8 +31,8 @@ export default function Prospects() {
   };
 
   const tabs: { id: Tab; label: string }[] = [
-    { id: "ready", label: "Ready to Review" }, { id: "high_fit", label: "High-Fit Prospects" }, { id: "watchlist", label: "Watchlist" },
-    { id: "all", label: "All Businesses" }, { id: "approved", label: "Approved" }, { id: "rejected", label: "Excluded" },
+    { id: "ready", label: "Ready to approach" }, { id: "strong", label: "Strong prospects" }, { id: "watchlist", label: "Watchlist" },
+    { id: "verify", label: "Needs verification" }, { id: "approved", label: "Approved" }, { id: "all", label: "All" }, { id: "excluded", label: "Excluded" },
   ];
   return (
     <>

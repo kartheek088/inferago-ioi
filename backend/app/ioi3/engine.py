@@ -15,7 +15,7 @@ import threading
 from collections.abc import Callable
 from typing import Any
 
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
@@ -23,6 +23,7 @@ from sqlalchemy.orm import Session
 from app.db import SessionLocal, utcnow
 from app.http_client import SafeHttp
 from app.ioi3 import collect, core, qualify, research
+from app.ioi3.fetch import Stats, short_write, with_retry
 from app.ioi3.models import Campaign, Company, Job
 
 log = logging.getLogger("ioi3.engine")
@@ -99,7 +100,7 @@ def start_job(db: Session, campaign: Campaign, *, mode: str | None = None, trigg
         params={"max_candidates": int(st.get("max_candidates") or 50), "max_deep": int(st.get("max_deep") or 10),
                 "daily_shortlist": int(st.get("daily_shortlist") or 5), "ai_max_calls": int(st.get("ai_max_calls") or 0),
                 "sources": sources},
-        log=[f"{utcnow():%H:%M:%S} Queued ({mode})"],
+        log=[f"{datetime.now():%H:%M:%S} Queued ({mode})"],
     )
     db.add(job)
     db.commit()
@@ -110,10 +111,10 @@ def start_job(db: Session, campaign: Campaign, *, mode: str | None = None, trigg
 def request_stop(db: Session, job: Job) -> Job:
     if job.status == "queued":
         job.status, job.finished_at = "stopped", utcnow()
-        job.log = [*job.log, f"{utcnow():%H:%M:%S} Stopped before it started"]
+        job.log = [*job.log, f"{datetime.now():%H:%M:%S} Stopped before it started"]
     elif job.status == "running":
         job.cancel_requested, job.status = True, "stopping"
-        job.log = [*job.log, f"{utcnow():%H:%M:%S} Stop requested — finishing the current item"]
+        job.log = [*job.log, f"{datetime.now():%H:%M:%S} Stop requested — finishing the current item"]
     db.commit()
     return job
 
@@ -124,7 +125,7 @@ def recover(db: Session) -> int:
     for job in db.scalars(select(Job).where(Job.status.in_(("running", "stopping")))):
         job.status, job.finished_at = "interrupted", utcnow()
         job.error = "The app was restarted while this run was in progress. Completed work was saved; use Retry to continue."
-        job.log = [*job.log, f"{utcnow():%H:%M:%S} Interrupted by an app restart"]
+        job.log = [*job.log, f"{datetime.now():%H:%M:%S} Interrupted by an app restart"]
         n += 1
     db.commit()
     return n
@@ -160,108 +161,184 @@ def stop_worker(timeout: float = 10) -> None:
         _thread.join(timeout)
 
 
+_current_job: int | None = None  # job being run by this process's worker (for stale-job detection)
+STALE_AFTER = timedelta(minutes=3)
+
+
 def _loop() -> None:
     while not _stop.is_set():
         _wake.wait(5)
         _wake.clear()
+        try:
+            with SessionLocal() as db:
+                recover_stale(db)
+        except Exception:  # noqa: BLE001
+            log.exception("stale-job check failed")
         while not _stop.is_set() and run_next():
             pass
 
 
+def recover_stale(db: Session) -> int:
+    """A running job whose heartbeat stopped (worker crashed / thread died) is marked interrupted."""
+    n = 0
+    cutoff = utcnow() - STALE_AFTER
+    for job in db.scalars(select(Job).where(Job.status.in_(("running", "stopping")))):
+        if job.id == _current_job:
+            continue
+        if (job.heartbeat_at or job.started_at or job.created_at) < cutoff:
+            job.status, job.finished_at = "interrupted", utcnow()
+            job.error = "The discovery worker stopped responding (no progress for 3 minutes). Completed work was saved; use Retry."
+            job.log = [*(job.log or []), f"{datetime.now():%H:%M:%S} Marked interrupted: no heartbeat since {job.heartbeat_at:%H:%M:%S}"
+                       if job.heartbeat_at else f"{datetime.now():%H:%M:%S} Marked interrupted: never reported progress"]
+            n += 1
+    if n:
+        db.commit()
+    return n
+
+
 def run_next(http_factory: Callable[[], SafeHttp] | None = None) -> bool:
     """Run the oldest queued job, if any. Returns True if a job ran. (Called by the worker and by tests.)"""
+    global _current_job
     with SessionLocal() as db:
         job = db.scalar(select(Job).where(Job.status == "queued").order_by(Job.id))
         if job is None:
             return False
         job_id = job.id
+    _current_job = job_id
     try:
         Runner(job_id, http_factory).run()
     except Exception:  # noqa: BLE001 — never let the worker thread die
         log.exception("Discovery job %s crashed", job_id)
+        try:
+            def mark(s):
+                j = s.get(Job, job_id)
+                if j and j.status in ("running", "stopping", "queued"):
+                    j.status, j.finished_at, j.error = "failed", utcnow(), "Internal error — see Settings → Advanced → Job history"
+            short_write(mark)
+        except Exception:  # noqa: BLE001
+            pass
+    finally:
+        _current_job = None
     return True
 
 
 class Runner:
+    """Runs one job. Progress is written in short, retried transactions separate from the work session,
+    so a click in the UI can never make the job fail with 'database is locked'."""
+
     def __init__(self, job_id: int, http_factory: Callable[[], SafeHttp] | None = None) -> None:
         self.job_id = job_id
         self.http_factory = http_factory or (lambda: SafeHttp(rate_limit_per_minute=20))
 
-    # --- state helpers ---------------------------------------------------------------------------
-    def _job(self) -> Job:
-        return self.db.get(Job, self.job_id)
+    # --- progress (own short transactions) -------------------------------------------------------
+    def _w(self, fn: Callable[[Job], None]) -> None:
+        def go(s):
+            j = s.get(Job, self.job_id)
+            fn(j)
+            j.heartbeat_at = utcnow()
+        short_write(go)
 
-    def say(self, msg: str) -> None:
-        job = self._job()
-        job.log = [*(job.log or [])[-199:], f"{utcnow():%H:%M:%S} {msg}"]
-        job.heartbeat_at = utcnow()
-        self.db.commit()
+    def say(self, msg: str, *, ok: bool = False) -> None:
+        line = f"{datetime.now():%H:%M:%S} {msg}"
+
+        def f(j: Job) -> None:
+            j.log = [*(j.log or [])[-199:], line]
+            if ok:
+                j.summary = {**(j.summary or {}), "last_success": line}
+        self._w(f)
 
     def stage(self, key: str) -> None:
-        job = self._job()
-        job.stage, job.stage_index = key, [k for k, _ in STAGES].index(key) + 1
-        job.heartbeat_at = utcnow()
-        self.db.commit()
+        def f(j: Job) -> None:
+            j.stage, j.stage_index = key, [k for k, _ in STAGES].index(key) + 1
+            j.summary = {**(j.summary or {}), "stage_started_at": utcnow().isoformat()}
+        self._w(f)
         self.say(dict(STAGES)[key])
 
-    def count(self, **delta: int) -> None:
-        job = self._job()
-        c = dict(job.counters or {})
-        for k, v in delta.items():
-            c[k] = c.get(k, 0) + v
-        job.counters, job.heartbeat_at = c, utcnow()
-        self.db.commit()
+    def metrics(self, group: str, **values: Any) -> None:
+        """group: run | pool | campaign. Values replace previous ones in that group."""
+        def f(j: Job) -> None:
+            m = dict(j.counters or {})
+            m[group] = {**(m.get(group) or {}), **values}
+            j.counters = m
+        self._w(f)
 
     def source(self, key: str, **kw: Any) -> None:
-        job = self._job()
-        src = dict(job.sources or {})
-        src[key] = {**src.get(key, {}), **kw}
-        job.sources = src
-        self.db.commit()
+        def f(j: Job) -> None:
+            src = dict(j.sources or {})
+            src[key] = {**src.get(key, {}), **kw}
+            j.sources = src
+        self._w(f)
 
     def stopping(self) -> bool:
-        self.db.expire_all()
-        return bool(self._job().cancel_requested)
+        with SessionLocal() as s:
+            return bool(s.scalar(select(Job.cancel_requested).where(Job.id == self.job_id)))
 
     # --- run -------------------------------------------------------------------------------------
     def run(self) -> None:
         with SessionLocal() as db:
             self.db = db
-            job = self._job()
-            job.status, job.started_at, job.heartbeat_at = "running", utcnow(), utcnow()
+            job = db.get(Job, self.job_id)
+            campaign_id, mode, p = job.campaign_id, job.mode, dict(job.params or {})
             db.commit()
-            campaign = db.get(Campaign, job.campaign_id)
-            p = job.params or {}
+
+            def start(j: Job) -> None:
+                j.status, j.started_at = "running", utcnow()
+                j.counters = {"run": {"reviewed": 0, "added": 0, "duplicates": 0, "rejected": 0, "researched": 0,
+                                      "research_failed": 0, "newly_qualified": 0}, "pool": {}, "campaign": {}}
+            self._w(start)
+            campaign = db.get(Campaign, campaign_id)
             srcs = set(p.get("sources") or [])
+            self.ready_before = {c.id for c in db.scalars(select(Company).where(Company.campaign_id == campaign_id))
+                                 if qualify.sales_ready(c.gates or [])}
+            db.commit()
             http = self.http_factory()
-            touched: set[int] = set()
+            status, error = "completed", None
             try:
-                self._find(campaign, p, srcs, touched)
-                if not self.stopping() and job.mode != "quick" and "news_rss" in srcs:
+                self._find(campaign, p, srcs)
+                if not self.stopping() and mode != "quick" and "news_rss" in srcs:
                     self._news(campaign, http)
-                if not self.stopping() and job.mode != "quick" and "official_websites" in srcs:
-                    self._research(campaign, p, http, deep=job.mode == "deep", touched=touched)
+                if not self.stopping() and mode != "quick" and "official_websites" in srcs:
+                    self._research(campaign, p, deep=mode == "deep")
+                if not self.stopping() and mode == "deep" and not getattr(self, "network_down", False):
+                    self._agent(campaign, p)
                 self._shortlist(campaign, p)
-                job = self._job()
-                job.status = "stopped" if job.cancel_requested else "completed"
+                if self.stopping():
+                    status = "stopped"
             except Exception as exc:  # noqa: BLE001
                 log.exception("job failed")
                 db.rollback()
-                job = self._job()
-                job.status, job.error = "failed", f"{type(exc).__name__}: {str(exc)[:400]}"
-                job.log = [*(job.log or []), f"{utcnow():%H:%M:%S} Failed: {job.error}"]
+                status, error = "failed", f"{type(exc).__name__}: {str(exc)[:400]}"
+                self.say(f"Failed: {error}")
             finally:
                 http.close()
-            job.finished_at = utcnow()
-            job.sources = {k: ({**v, "status": "skipped", "error": None} if v.get("status") == "waiting" else v)
-                           for k, v in (job.sources or {}).items()}
-            job.summary = self._summary(campaign)
-            failed = [k for k, v in (job.sources or {}).items() if v.get("status") == "failed"]
-            job.log = [*(job.log or []), f"{utcnow():%H:%M:%S} {'Stopped' if job.status == 'stopped' else job.status.title()}"
-                       + (f" — {len(failed)} source(s) failed" if failed else "")]
-            db.commit()
+            summary = self._summary(campaign)
+            failed = [k for k, v in (self._snapshot().sources or {}).items() if v.get("status") == "failed"]
 
-    def _find(self, campaign: Campaign, p: dict, srcs: set[str], touched: set[int]) -> None:
+            def finish(j: Job) -> None:
+                j.status, j.error, j.finished_at = status, error, utcnow()
+                j.sources = {k: ({**v, "status": "skipped", "error": None} if v.get("status") == "waiting" else v)
+                             for k, v in (j.sources or {}).items()}
+                j.summary = {**(j.summary or {}), **summary}
+                j.log = [*(j.log or []), f"{datetime.now():%H:%M:%S} {'Stopped' if status == 'stopped' else status.title()}"
+                         + (f" — {len(failed)} source(s) failed" if failed else "")]
+            self._w(finish)
+
+    def _snapshot(self) -> Job:
+        with SessionLocal() as s:
+            j = s.get(Job, self.job_id)
+            s.expunge(j)
+            return j
+
+    def _campaign_metrics(self, campaign: Campaign) -> None:
+        q = self.db.query(Company).filter(Company.campaign_id == campaign.id, Company.archived.is_(False))
+        rows = q.all()
+        self.db.commit()
+        self.metrics("campaign", companies=len(rows),
+                     needs_verification=sum(1 for c in rows if c.qualification != "P3" and not qualify.sales_ready(c.gates or [])),
+                     ready_to_review=sum(1 for c in rows if c.review_status == "shortlisted"),
+                     sales_ready=sum(1 for c in rows if qualify.sales_ready(c.gates or []) and c.qualification != "P3"))
+
+    def _find(self, campaign: Campaign, p: dict, srcs: set[str]) -> None:
         self.stage("finding")
         if "overture_places" not in srcs:
             self.say("Business directory is switched off — skipping new businesses")
@@ -272,85 +349,71 @@ class Runner:
             if path is None:
                 raise FileNotFoundError("needs_setup: the business directory file is not downloaded")
             cands = collect.overture_candidates(path)
-            core.mark_source(self.db, "overture_places", ok=True, records=len(cands), freshness=f"File {path.name}")
-            self.db.commit()
-            self.say(f"Read {len(cands):,} real business listings in the Chennai area")
+            short_write(lambda s: core.mark_source(s, "overture_places", ok=True, records=len(cands), freshness=f"File {path.name}"))
+            self.say(f"Read {len(cands):,} business listings in the Chennai area from the directory file", ok=True)
         except Exception as exc:  # noqa: BLE001
-            core.mark_source(self.db, "overture_places", ok=False, error=str(exc))
-            self.source("overture_places", status="failed", error=str(exc).removeprefix("needs_setup: "))
-            self.say(f"Business directory unavailable: {str(exc).removeprefix('needs_setup: ')}")
+            msg = str(exc).removeprefix("needs_setup: ")
+            short_write(lambda s: core.mark_source(s, "overture_places", ok=False, error=str(exc)))
+            self.source("overture_places", status="failed", error=msg, kind="permanent" if "needs_setup" in str(exc) else "retryable")
+            self.say(f"Business directory unavailable: {msg}")
             return
         self.stage("locations")
-        total = {"n": 0}
 
         def progress(msg: str, stats: dict) -> None:
-            job = self._job()
-            job.counters = {**(job.counters or {}), "processed": stats["processed"], "accepted": stats["accepted"],
-                            "rejected": stats["outside_chennai"] + stats["chain_outlet"] + stats["wrong_industry"],
-                            "duplicates": stats["duplicate"], "total": stats["new_relevant"]}
-            job.heartbeat_at = utcnow()
-            self.db.commit()
-            total["n"] = stats["processed"]
+            self.metrics("run", reviewed=stats["processed"], added=stats["accepted"], duplicates=stats["duplicate"],
+                         rejected=stats["outside_chennai"] + stats["chain_outlet"] + stats["wrong_industry"], to_review=stats["new_relevant"])
             if stats["processed"] % 10 == 0 or stats["processed"] == stats["new_relevant"]:
                 self.say(msg)
 
         stats = collect.collect_overture(self.db, campaign, limit=int(p.get("max_candidates") or 50), job_id=self.job_id,
                                          progress=progress, should_stop=self.stopping, cands=cands)
+        self.db.commit()
         self.source("overture_places", status="done", records=stats["accepted"])
+        self.metrics("pool", unseen_relevant=stats.get("unseen_relevant", 0), outside_city=stats["prefiltered_outside"],
+                     chain_outlets=stats["prefiltered_chain"])
+        self.stage("industry")
+        self.say(f"This run: {stats['processed']} reviewed · {stats['accepted']} added · {stats['duplicate']} duplicates. "
+                 f"Directory file: {stats.get('unseen_relevant', 0)} relevant listings not yet reviewed "
+                 f"({stats['prefiltered_outside']} outside the city and {stats['prefiltered_chain']} chain outlets are never added)", ok=True)
         if stats["new_relevant"] == 0:
             self.say("No new relevant businesses left in the directory file for this campaign")
-        self.stage("industry")
-        out = stats["outside_chennai"] + stats["prefiltered_outside"]
-        chain = stats["chain_outlet"] + stats["prefiltered_chain"]
-        self.say(f"{stats['accepted']} businesses kept · {out} outside Chennai city · {stats['duplicate']} duplicates · "
-                 f"{chain} brand outlets skipped")
-        job = self._job()
-        job.counters = {**job.counters, "rejected_outside_total": out, "chain_outlets_total": chain}
-        self.db.commit()
-        job = self._job()
-        job.counters = {**job.counters, "pending": self.db.query(Company).filter(
-            Company.campaign_id == campaign.id, Company.archived.is_(False), Company.qualification == "P2").count()}
-        self.db.commit()
+        self._campaign_metrics(campaign)
 
     def _news(self, campaign: Campaign, http: SafeHttp) -> None:
         self.stage("signals")
         self.source("news_rss", status="running")
-        feed_errors: list[str] = []
-
-        def on_feed(name: str, ok: bool) -> None:
-            if not ok:
-                feed_errors.append(name)
-
         try:
-            st = research.scan_news(self.db, campaign, http, job_id=self.job_id, on_feed=on_feed)
+            st = research.scan_news(self.db, campaign, http, job_id=self.job_id)
         except Exception as exc:  # noqa: BLE001
-            core.mark_source(self.db, "news_rss", ok=False, error=str(exc))
-            self.source("news_rss", status="failed", error=str(exc)[:200])
+            self.db.rollback()
+            short_write(lambda s: core.mark_source(s, "news_rss", ok=False, error=str(exc)))
+            self.source("news_rss", status="failed", error=str(exc)[:200], kind="retryable")
             self.say(f"News feeds failed: {str(exc)[:150]}")
             return
         ok = st["feeds_ok"] > 0
-        core.mark_source(self.db, "news_rss", ok=ok, records=st["articles"], error=None if ok else "; ".join(st["feeds_failed"])[:400],
-                         freshness=f"{st['articles']} articles read {utcnow():%d %b}")
+        short_write(lambda s: core.mark_source(s, "news_rss", ok=ok, records=st["articles"],
+                                               error=None if ok else "; ".join(st["feeds_failed"])[:400],
+                                               freshness=f"{st['articles']} articles read {utcnow():%d %b}"))
         self.source("news_rss", status="done" if ok else "failed", records=st["articles"],
-                    error=("; ".join(st["feeds_failed"]) or None))
-        self.db.commit()
+                    error=("; ".join(st["feeds_failed"]) or None), kind="retryable" if st["feeds_failed"] else None,
+                    skipped_backoff=st.get("skipped_backoff", 0))
         self.say(f"News: {st['articles']} articles from {st['feeds_ok']} feeds · {st['relevant']} relevant Chennai items · "
                  f"{st['matched']} matched a business · {st['new_signals']} new signals"
-                 + (f" · {len(st['feeds_failed'])} feed(s) failed" if st["feeds_failed"] else ""))
+                 + (f" · {len(st['feeds_failed'])} feed(s) failed" if st["feeds_failed"] else "")
+                 + (f" · {st['skipped_backoff']} feed(s) skipped after recent failures" if st.get("skipped_backoff") else ""), ok=ok)
 
-    def _research(self, campaign: Campaign, p: dict, http: SafeHttp, *, deep: bool, touched: set[int]) -> None:
+    def _research(self, campaign: Campaign, p: dict, *, deep: bool) -> None:
         self.stage("research")
         limit = int(p.get("max_deep") or 10)
         want = ("directory", "website") if deep else ("directory",)
+        now = utcnow()
         pool = list(self.db.scalars(select(Company).where(
             Company.campaign_id == campaign.id, Company.archived.is_(False), Company.website.is_not(None),
             Company.research_level.in_(want), Company.qualification != "P3",
             Company.review_status.in_(("new", "shortlisted", "watchlist")),
-            # A website that failed recently isn't retried automatically for a week ("Research further" still can).
-            or_(Company.research_error.is_(None), Company.researched_at.is_(None),
-                Company.researched_at < utcnow() - timedelta(days=7)))
+            # Back off failed websites: 1 day for temporary problems, 30 days for permanent ones ("Research further" still works).
+            or_(Company.research_retry_after.is_(None), Company.research_retry_after <= now))
             .order_by(Company.prescore.desc(), Company.id)))
-        # Respect the campaign's industry mix (e.g. 70/30) in research effort too; fill any unused share.
         mix = campaign.industry_mix or core.DEFAULT_MIX
         total = sum(mix.values()) or 1
         rows: list[Company] = []
@@ -359,29 +422,80 @@ class Runner:
         rows += [c for c in pool if c not in rows][: max(0, limit - len(rows))]
         rows = sorted(rows[:limit], key=lambda c: (-c.prescore, c.id))
         self.source("official_websites", status="running")
-        self.say(f"Researching {len(rows)} company websites (up to {7 if deep else 4} pages each, robots.txt respected)")
-        ai_left = int(p.get("ai_max_calls") or 0) if deep else 0
-        ok = failed = 0
-        for i, c in enumerate(rows, start=1):
-            if self.stopping():
-                break
-            used = research.research_company(self.db, c, http, deep=deep, ai_calls_left=ai_left)
-            ai_left -= used
-            self.db.commit()
-            touched.add(c.id)
-            if c.research_error:
-                failed += 1
-            else:
-                ok += 1
-            self.say(f"Researched {i} of {len(rows)}: {c.name} — {c.qualification}"
-                     + (f" ({c.research_error[:80]})" if c.research_error else ""))
+        self.say(f"Researching {len(rows)} company websites, 4 at a time (up to {7 if deep else 4} pages each, robots.txt respected)")
+        done = {"n": 0}
+        stats = Stats()
+
+        def on_done(c: Company) -> None:
+            done["n"] += 1
+            qualified = qualify.sales_ready(c.gates or []) and c.id not in self.ready_before
+            self.metrics("run", researched=done["n"], research_failed=getattr(self, "_rf", 0) + (1 if c.research_error else 0))
+            self._rf = getattr(self, "_rf", 0) + (1 if c.research_error else 0)
+            if qualified:
+                self.ready_before.add(c.id)
+                self._nq = getattr(self, "_nq", 0) + 1
+                self.metrics("run", newly_qualified=self._nq)
+            self.say(f"Researched {done['n']} of {len(rows)}: {c.name} — "
+                     + (c.research_error[:120] if c.research_error else ("passes every check" if qualify.sales_ready(c.gates or []) else c.next_action or c.qualification)),
+                     ok=not c.research_error)
+
+        res = research.research_many(self.db, rows, deep=deep, on_done=on_done, should_stop=self.stopping, stats=stats)
+        ok, failed = res["researched"], res["failed"]
+        if res.get("network_outage"):
+            self.network_down = True
+            msg = ("This computer couldn't reach the internet (DNS lookups failing), so website research stopped early. "
+                   "Nothing was blamed on the companies; they'll be retried in about 15 minutes. Check the internet connection, then use Retry.")
+            short_write(lambda s: core.mark_source(s, "official_websites", ok=False, error="Network/DNS problem on this computer"))
+            self.source("official_websites", status="failed", records=ok, error="Network/DNS problem on this computer", kind="retryable")
+            self.say(msg)
+            self.metrics("run", pages_fetched=res["pages_fetched"], cache_hits=res["cache_hits"], revalidated_304=res["revalidated_304"])
+            self._campaign_metrics(campaign)
+            return
         if ok:
-            core.mark_source(self.db, "official_websites", ok=True, records=ok, freshness=f"Last check {utcnow():%d %b %Y}")
+            short_write(lambda s: core.mark_source(s, "official_websites", ok=True, records=ok, freshness=f"Last check {utcnow():%d %b %Y}"))
         elif failed:
-            core.mark_source(self.db, "official_websites", ok=False, error=f"All {failed} websites failed to load")
+            short_write(lambda s: core.mark_source(s, "official_websites", ok=False, error=f"All {failed} websites failed to load"))
         self.source("official_websites", status="done" if ok or not failed else "failed", records=ok,
                     error=f"{failed} website(s) could not be loaded" if failed else None)
+        self.metrics("run", pages_fetched=res["pages_fetched"], cache_hits=res["cache_hits"], revalidated_304=res["revalidated_304"])
+        self._campaign_metrics(campaign)
+
+    def _agent(self, campaign: Campaign, p: dict) -> None:
+        """Deep mode: the bounded AI research agent investigates the strongest researched candidates."""
+        from app.ioi3 import agent
+
+        budget = int(p.get("ai_max_calls") or 0)
+        if budget <= 0:
+            self.say("AI research is switched off for this run (AI call limit is 0) — rule-based research only")
+            return
+        if not agent.available(self.db):
+            self.say("AI unavailable — rule-based research active")
+            self.source("ai_agent", status="failed", error="AI not configured or not reachable", kind="permanent")
+            return
+        rows = [c for c in self.db.scalars(select(Company).where(
+            Company.campaign_id == campaign.id, Company.archived.is_(False), Company.website.is_not(None),
+            Company.research_error.is_(None), Company.research_level != "directory", Company.qualification != "P3",
+            Company.review_status.in_(("new", "shortlisted", "watchlist"))).order_by(Company.score.desc(), Company.id))
+            if c.ai_status in ("not_run", "failed", "unavailable")][: max(1, min(5, budget // 4))]
         self.db.commit()
+        self.source("ai_agent", status="running")
+        self.say(f"AI research agent: investigating {len(rows)} strongest candidate(s) (max {agent.LIMITS.max_model_calls} AI calls each)")
+        calls = 0
+        for c in rows:
+            if self.stopping() or calls >= budget:
+                break
+            out = agent.investigate(self.db, c, job_id=self.job_id, max_model_calls=min(agent.LIMITS.max_model_calls, budget - calls),
+                                    should_stop=self.stopping)
+            calls += out.model_calls
+            self.say(f"AI agent finished {c.name}: {out.outcome} ({out.model_calls} AI calls, {out.facts} new facts, {out.people} people)",
+                     ok=out.outcome != "failed")
+            if out.outcome == "failed" and out.model_calls == 0:
+                self.say("AI provider unreachable — stopping AI research for this run. Rule-based results are kept; use Retry AI research later.")
+                self.source("ai_agent", status="failed", error="AI provider unreachable", kind="retryable")
+                self.metrics("run", ai_calls=calls)
+                return
+        self.source("ai_agent", status="done", records=len(rows))
+        self.metrics("run", ai_calls=calls)
 
     def _shortlist(self, campaign: Campaign, p: dict) -> None:
         self.stage("shortlist")
@@ -389,7 +503,6 @@ class Runner:
                                                           Company.review_status.in_(("new", "shortlisted")))))
         for c in rows:
             core.evaluate(c)
-        self.db.commit()
         waiting = sum(1 for c in rows if c.review_status == "shortlisted")
         room = max(0, int(p.get("daily_shortlist") or 5) - waiting)
         order = {"P0": 0, "P1": 1, "P2": 2}
@@ -397,13 +510,23 @@ class Runner:
                        key=lambda c: (order.get(c.qualification, 9), -c.score))
         for c in ready[:room]:
             c.review_status = "shortlisted"
-        self.db.commit()
+        with_retry(self._commit_or_rollback)
         self.say(f"{min(room, len(ready))} new prospect(s) added to Ready to Review "
-                 f"({len(ready)} passed every check; {waiting} were already waiting)")
+                 f"({len(ready)} passed every check; {waiting} were already waiting)", ok=True)
+        self._campaign_metrics(campaign)
+
+    def _commit_or_rollback(self) -> None:
+        try:
+            self.db.commit()
+        except Exception:
+            self.db.rollback()
+            raise
 
     def _summary(self, campaign: Campaign) -> dict[str, Any]:
         q = self.db.query(Company).filter(Company.campaign_id == campaign.id, Company.archived.is_(False))
-        return {"companies": q.count(),
-                "by_category": {k: q.filter(Company.qualification == k).count() for k in ("P0", "P1", "P2", "P3")},
-                "ready_to_review": q.filter(Company.review_status == "shortlisted").count(),
-                "verified_locations": q.filter(Company.location_confidence == "verified").count()}
+        out = {"companies": q.count(),
+               "by_category": {k: q.filter(Company.qualification == k).count() for k in ("P0", "P1", "P2", "P3")},
+               "ready_to_review": q.filter(Company.review_status == "shortlisted").count(),
+               "verified_locations": q.filter(Company.location_confidence == "verified").count()}
+        self.db.commit()
+        return out

@@ -198,6 +198,7 @@ def rank_candidates(cands: list[Candidate], campaign: Campaign, limit: int, filt
     mix = campaign.industry_mix or core.DEFAULT_MIX
     total = sum(mix.get(i, 0) for i in by_ind) or 1
     picked: list[Candidate] = []
+    filtered["relevant_total"] = sum(len(r) for r in by_ind.values())
     for i, rows in by_ind.items():
         rows.sort(key=lambda t: (-t[0], t[1].external_id))
         picked += [c for _, c in rows[: round(limit * mix.get(i, 0) / total)]]
@@ -222,14 +223,24 @@ def collect_overture(db: Session, campaign: Campaign, *, limit: int, job_id: int
     chosen = rank_candidates(fresh, campaign, limit, filtered)
     stats = {"read": len(cands), "new_relevant": len(chosen), "accepted": 0, "outside_chennai": 0, "duplicate": 0, "chain_outlet": 0,
              "wrong_industry": 0, "processed": 0, "prefiltered_outside": filtered.get("outside_chennai", 0),
-             "prefiltered_chain": filtered.get("chain_outlet", 0)}
+             "prefiltered_chain": filtered.get("chain_outlet", 0),
+             "unseen_relevant": max(0, filtered.get("relevant_total", 0) - len(chosen))}
     for cand in chosen:
         if should_stop and should_stop():
             break
-        r = ingest(db, campaign, cand, job_id=job_id)
+        def one(cand=cand):
+            try:
+                r = ingest(db, campaign, cand, job_id=job_id)
+                db.commit()
+                return r
+            except Exception:
+                db.rollback()
+                raise
+        from app.ioi3.fetch import with_retry
+
+        r = with_retry(one)
         stats[r.outcome] = stats.get(r.outcome, 0) + 1
         stats["processed"] += 1
-        db.commit()
         if progress:
             progress(f"Checking businesses — {stats['processed']} of {len(chosen)} reviewed", stats)
     return stats

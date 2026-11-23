@@ -214,8 +214,10 @@ def test_job_runs_all_stages_and_shortlists(db, camp, web, overture, monkeypatch
     job = db.get(Job, job.id)
     assert job.status == "completed", job.log
     assert job.stage == "shortlist" and job.stage_index == 6
-    assert job.counters["accepted"] == 3 and job.counters["processed"] == 4  # out-of-scope listings filtered before ingesting
-    assert job.counters["rejected_outside_total"] == 2 and job.counters["chain_outlets_total"] == 1
+    run, pool, camp_m = job.counters["run"], job.counters["pool"], job.counters["campaign"]
+    assert run["added"] == 3 and run["reviewed"] == 4 and run["researched"] >= 1  # per-run numbers
+    assert pool["outside_city"] == 2 and pool["chain_outlets"] == 1  # directory-file numbers, labelled separately
+    assert camp_m["companies"] == 3  # campaign totals
     assert job.sources["overture_places"]["status"] == "done" and job.sources["official_websites"]["status"] == "done"
     vel = db.scalar(select(Company).where(Company.source_ref == "overture_places:t1"))
     assert vel.review_status == "shortlisted"  # passed every gate
@@ -224,7 +226,7 @@ def test_job_runs_all_stages_and_shortlists(db, camp, web, overture, monkeypatch
     engine.start_job(db, camp, mode="quick")
     _run(db)
     db.rollback()
-    assert db.scalar(select(Job).order_by(Job.id.desc())).counters.get("accepted", 0) == 0
+    assert db.scalar(select(Job).order_by(Job.id.desc())).counters["run"]["added"] == 0
     assert db.scalar(select(text("count(*)")).select_from(Company)) == 3
 
 
@@ -281,7 +283,7 @@ def test_approval_guard_and_sales_flow(db, camp, web):
     sales.mark_contacted(db, c, "owner", "phone", "Spoke to reception")
     sales.record_reply(db, c, "owner", "Service manager called back", True, buyer_problem="Technician visits are tracked on paper")
     db.commit()
-    assert c.qualification == "P0" and c.buying_intent == "buyer_confirmed"
+    assert c.qualification == "P0" and c.buying_intent == "confirmed"
     d = db.scalar(select(Deal))
     assert d.stage == "replied"
     with pytest.raises(sales.SalesError, match="quoted amount"):
@@ -427,7 +429,8 @@ def test_research_effort_follows_industry_mix(db, camp, overture, monkeypatch):
                   website=f"https://wh{i}.example") for i in range(10)]
     monkeypatch.setattr(collect, "overture_candidates", lambda path: many)
     seen: list[str] = []
-    monkeypatch.setattr(research, "research_company", lambda db, c, http, deep=False, ai_calls_left=0: seen.append(c.industry) or 0)
+    monkeypatch.setattr(research, "research_many", lambda db, rows, **kw: seen.extend(c.industry for c in rows) or
+                        {"researched": len(rows), "failed": 0, "pages_fetched": 0, "cache_hits": 0, "revalidated_304": 0})
     engine.start_job(db, camp, mode="balanced", overrides={"max_candidates": 20, "max_deep": 10})
     engine.run_next(lambda: SafeHttp())
     assert seen.count(EQUIPMENT) == 7 and seen.count(WHOLESALE) == 3

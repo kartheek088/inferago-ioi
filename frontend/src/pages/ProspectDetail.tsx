@@ -1,17 +1,19 @@
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { ArrowLeft, Check, CircleHelp, Copy, Globe, Mail, Phone, RefreshCw, X } from "lucide-react";
+import { ArrowLeft, Bot, Check, CircleHelp, Copy, Globe, Mail, Phone, RefreshCw, X } from "lucide-react";
 import { Badge, Button, Card, ErrorState, Ext, Field, Input, Modal, Msg, Notice, Select, Spinner, Textarea } from "../components/ui";
 import { EvidenceTag, LocationBadge, QualBadge } from "../components/prospect";
+import { AgentTrace, AIChip, Classifications } from "../components/intel";
 import { api } from "../lib/api";
 import { useAction, useQuery } from "../lib/hooks";
-import { FRICTION, INDUSTRY, INTENT, SIGNAL_TYPES, date } from "../lib/format";
+import { AI_STATUS, FRICTION, INDUSTRY, INTENT, SIGNAL_TYPES, date } from "../lib/format";
 import type { CompanyDetail, Fact } from "../lib/types";
 
 export default function ProspectDetail() {
   const { id } = useParams();
   const q = useQuery(() => api.get<CompanyDetail>(`/companies/${id}`), [id]);
   const act = useAction();
+  const aiAct = useAction();
   const [draft, setDraft] = useState<string | null>(null);
   const [factOpen, setFactOpen] = useState(false);
   const c = q.data;
@@ -63,6 +65,61 @@ export default function ProspectDetail() {
         </div>
         <Msg msg={act.msg} />
         {c.research_error && <div className="mt-3"><Notice kind="warn">{c.research_error}</Notice></div>}
+        <div className="mt-4"><Classifications c={c} /></div>
+      </Card>
+
+      {c.dossier.answers && (
+        <Card title="Key questions" description="Answered only from stored evidence. Nothing here means the company has agreed to buy.">
+          <dl className="grid gap-x-6 gap-y-3 sm:grid-cols-2">
+            {c.dossier.answers.map((x) => (
+              <div key={x.q}><dt className="text-xs font-semibold uppercase tracking-wide text-subtle">{x.q}</dt><dd className="mt-0.5 text-sm">{x.a}</dd></div>
+            ))}
+          </dl>
+        </Card>
+      )}
+
+      <div className="grid gap-6 lg:grid-cols-2">
+        <Card title="Management & decision-makers" description="Only names and roles the company itself publishes, with the quote. Never guessed.">
+          {c.people.length === 0 ? <p className="text-sm text-subtle">No management contact is publicly published on the pages read.</p> : (
+            <ul className="space-y-3">{c.people.map((p) => (
+              <li key={p.id} className="text-sm">
+                <div className="flex flex-wrap items-center gap-2"><span className="font-medium">{p.name}</span><Badge>{p.role}</Badge>
+                  {p.detected_by === "ai" && <Badge tone="info">found by AI · quote checked</Badge>}</div>
+                <blockquote className="mt-1 border-l-2 border-border pl-3 text-xs text-subtle">“{p.excerpt.slice(0, 220)}”</blockquote>
+                <div className="mt-1 text-xs"><Ext href={p.source_url}>source</Ext>{p.published_contact && <> · published contact: {p.published_contact}</>} · {date(p.verified_at)}</div>
+              </li>
+            ))}</ul>
+          )}
+        </Card>
+        <Card title="Public activity & testimonials" description="Testimonials on a company's own site are self-published claims, not independent reviews.">
+          {facts("testimonial").length + facts("activity").length === 0 ? <p className="text-sm text-subtle">Nothing found yet.</p> : (
+            <ul className="space-y-3">{[...facts("activity"), ...facts("testimonial")].map((f) => <FactRow key={f.id} f={f} />)}</ul>
+          )}
+        </Card>
+      </div>
+
+      <Card title={<span className="flex items-center gap-2"><Bot className="h-4 w-4" />AI research <Badge tone={AI_STATUS[c.ai_status]?.tone ?? "neutral"}>{AI_STATUS[c.ai_status]?.label ?? c.ai_status}</Badge></span>}
+        description="A bounded agent reads the company's own pages and records only quote-checked facts. Read-only; it never contacts anyone."
+        action={<Button size="sm" loading={aiAct.busy} disabled={!c.website} onClick={async () => {
+          const r = await aiAct.run(() => api.post<CompanyDetail>(`/companies/${c.id}/ai-research`));
+          if (r) { q.setData(r); aiAct.setMsg({ kind: r.ai_status === "failed" || r.ai_status === "unavailable" ? "err" : "ok", text: r.dossier.agent?.summary ?? `AI research: ${r.ai_status}` }); }
+        }}>{c.ai_status === "not_run" ? "Research with AI" : "Retry AI research"}</Button>}>
+        <div className="space-y-3">
+          <AIChip />
+          <Msg msg={aiAct.msg} />
+          {c.dossier.agent && (
+            <div className="rounded-xl border border-border bg-bg/40 p-3 text-sm">
+              {c.dossier.agent.summary && <p>{c.dossier.agent.summary}</p>}
+              {c.dossier.agent.open_questions.length > 0 && <ul className="mt-2 list-disc pl-5 text-subtle">{c.dossier.agent.open_questions.map((x) => <li key={x}>{x}</li>)}</ul>}
+              <p className="mt-2 text-xs text-subtle">Outcome: {c.dossier.agent.outcome}{c.dossier.agent.stop_reason ? ` (${c.dossier.agent.stop_reason})` : ""} · {c.dossier.agent.model_calls} AI calls ·
+                {" "}{c.dossier.agent.tool_calls} tool calls · {c.dossier.agent.tokens} tokens{c.dossier.agent.cost_usd ? ` · $${c.dossier.agent.cost_usd.toFixed(4)}` : ""} · {date(c.dossier.agent.at, true)}</p>
+            </div>
+          )}
+          <details open={c.agent_events.length > 0 && c.agent_events.length < 30}>
+            <summary className="cursor-pointer text-sm font-medium">Activity trace ({c.agent_events.length} events)</summary>
+            <div className="mt-2 max-h-80 overflow-auto"><AgentTrace events={c.agent_events} /></div>
+          </details>
+        </div>
       </Card>
 
       <div className="grid gap-6 lg:grid-cols-3">
@@ -168,6 +225,17 @@ export default function ProspectDetail() {
                 <p><span className="font-medium">Why this: </span>{c.solution.why}</p>
                 <div><span className="font-medium">Confirm with the buyer</span><ul className="mt-1 list-disc pl-5 text-subtle">{c.solution.confirm_with_buyer.map((s) => <li key={s}>{s}</li>)}</ul></div>
                 <p className="text-xs text-subtle">No price is suggested until the scope is confirmed.</p>
+                {c.solution.existing_software && (
+                  <details className="pt-1">
+                    <summary className="cursor-pointer font-medium">Software they could use instead (configure before building)</summary>
+                    <ul className="mt-2 space-y-2">{c.solution.existing_software.options.map((o) => (
+                      <li key={o.name}><Ext href={o.url}>{o.name}</Ext> <span className="text-xs text-subtle">· {o.category}</span>
+                        {c.solution.existing_software!.already_mentioned.includes(o.name) && <Badge tone="info" className="ml-1">mentioned on their site</Badge>}
+                        <div className="text-xs text-subtle">{o.solves} Burden: {o.burden} <span className="text-fg">Inferago: {o.inferago_role}</span></div></li>
+                    ))}</ul>
+                    <p className="mt-2 text-xs text-subtle">{c.solution.existing_software.note}</p>
+                  </details>
+                )}
               </div>
             ) : <p className="text-sm text-subtle">{c.solution.why}</p>}
           </Card>
@@ -238,7 +306,7 @@ function EditDetails({ c, onSaved }: { c: CompanyDetail; onSaved: (r: CompanyDet
   const [dq, setDq] = useState(c.disqualifier ?? "");
   const [act2, setAct2] = useState("");
   const act = useAction();
-  const save = async (body: Record<string, string>) => { const r = await act.run(() => api.patch<CompanyDetail>(`/companies/${c.id}`, body), "Saved"); if (r) onSaved(r); };
+  const save = async (body: Record<string, string | boolean>) => { const r = await act.run(() => api.patch<CompanyDetail>(`/companies/${c.id}`, body), "Saved"); if (r) onSaved(r); };
   return (
     <details className="mt-4 text-sm">
       <summary className="cursor-pointer font-medium">Correct details</summary>
@@ -253,6 +321,11 @@ function EditDetails({ c, onSaved }: { c: CompanyDetail; onSaved: (r: CompanyDet
           <Field label="I confirmed they're operating now" hint="e.g. 'Called on 23 Nov, they answered' or a link to a recent post">
             <div className="flex gap-2"><Input value={act2} onChange={(e) => setAct2(e.target.value)} /><Button size="sm" disabled={act2.length < 5} onClick={() => save({ activity_evidence: act2 })}>Confirm</Button></div>
           </Field>
+        )}
+        {c.gates.some((g) => g.key === "scope" && g.passed === null) && (
+          <Notice kind="warn">Size check needed: {c.gates.find((g) => g.key === "scope")?.detail}
+            <div className="mt-2"><Button size="sm" onClick={() => save({ scope_confirmed: true })}>This is a realistic size for Inferago</Button></div>
+          </Notice>
         )}
         <Field label="Known blocker (e.g. requires GST invoice)"><div className="flex gap-2"><Input value={dq} onChange={(e) => setDq(e.target.value)} /><Button size="sm" onClick={() => save({ disqualifier: dq })}>Save</Button></div></Field>
         <Msg msg={act.msg} />

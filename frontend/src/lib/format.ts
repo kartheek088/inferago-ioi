@@ -20,7 +20,19 @@ export const LOCATION: Record<string, { label: string; tone: Tone }> = {
   outside: { label: "Outside Chennai", tone: "bad" },
 };
 export const FRICTION: Record<string, string> = { low: "Low friction", moderate: "Moderate friction", high: "High friction", unknown: "Friction unknown" };
-export const INTENT: Record<string, string> = { explicit: "Explicit", buyer_confirmed: "Buyer confirmed", indirect: "Indirect", unknown: "Unknown" };
+export const INTENT: Record<string, string> = { confirmed: "Confirmed by buyer", explicit_public: "Explicit public request", indirect: "Indirect signal", unknown: "Unknown",
+  explicit: "Explicit", buyer_confirmed: "Buyer confirmed" };
+export const FIT: Record<string, string> = { strong: "Strong", moderate: "Moderate", weak: "Weak", unknown: "Unknown" };
+export const READINESS: Record<string, string> = { buyer_confirmed: "Buyer confirmed", limited_public: "Limited public evidence", unknown: "Unknown" };
+export const EVQ: Record<string, string> = { strong: "Strong", partial: "Partial", weak: "Weak" };
+export const AI_STATUS: Record<string, { label: string; tone: Tone }> = {
+  not_run: { label: "AI not run", tone: "neutral" }, done: { label: "AI researched", tone: "ok" }, partial: { label: "AI: partial", tone: "info" },
+  unavailable: { label: "AI unavailable", tone: "warn" }, failed: { label: "AI failed", tone: "bad" },
+};
+export function duration(s: number | null | undefined): string {
+  if (s === null || s === undefined) return "—";
+  return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`;
+}
 export const EVIDENCE: Record<string, { label: string; tone: Tone }> = {
   source_verified: { label: "Verified", tone: "ok" },
   buyer_confirmed: { label: "Buyer confirmed", tone: "info" },
