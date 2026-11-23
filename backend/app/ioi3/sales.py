@@ -46,7 +46,22 @@ def log(db: Session, c: Company, kind: str, summary: str, *, actor: str = "owner
 # ------------------------------------------------------------------------------------------------
 # Outreach draft + approval
 # ------------------------------------------------------------------------------------------------
+EXCLUDED = {"b2b": "P3", "social_commerce": "S3"}
+
+
+def excluded_tier(c: Company) -> str:
+    """The qualification value that means 'excluded' in this company's channel."""
+    return EXCLUDED.get(c.channel, "P3")
+
+
 def draft(c: Company, sender_name: str = "", sender_link: str = "") -> dict[str, Any]:
+    """The outreach draft. Each channel words its own: a social seller is not a B2B company."""
+    from app.ioi3 import models
+
+    if c.channel == models.SOCIAL:
+        from app.ioi3.social import outreach as social_outreach
+
+        return social_outreach.draft(c, sender_name, sender_link)
     sol = c.solution or {}
     confirmed = [f for f in c.facts if f.kind == "signal" and f.review_status == "confirmed"]
     seen = [f for f in c.facts if f.kind == "workflow" and f.state == "source_verified"]
@@ -70,7 +85,7 @@ def draft(c: Company, sender_name: str = "", sender_link: str = "") -> dict[str,
 
 
 def approve(db: Session, c: Company, actor: str, message: str | None = None) -> Company:
-    if c.review_status in ("rejected", "duplicate") or c.qualification == "P3":
+    if c.review_status in ("rejected", "duplicate") or c.qualification == excluded_tier(c):
         raise SalesError("This business is excluded; restore it before approving.")
     if not qualify.sales_ready(c.gates):
         missing = [g["label"] for g in c.gates if g["passed"] is not True]
@@ -218,16 +233,22 @@ def balance(d: Deal) -> int:
     return max(0, (d.quoted_amount or 0) - collected(d)) if d.stage in CONTRACTED or d.payments else 0
 
 
-def revenue(db: Session, campaign_id: int, today: date | None = None) -> dict[str, int]:
+def revenue(db: Session, campaign_id: int | None, today: date | None = None) -> dict[str, int]:
+    """Money for one campaign, or — with campaign_id=None — across every acquisition channel.
+
+    The Sales Pipeline is shared, so its totals must span both channels; a channel's own dashboard
+    passes its campaign id to see only its own figures.
+    """
     today = today or date.today()
     month_start = today.replace(day=1)
-    deals = list(db.scalars(select(Deal).where(Deal.campaign_id == campaign_id)))
+    where = () if campaign_id is None else (Deal.campaign_id == campaign_id,)
+    deals = list(db.scalars(select(Deal).where(*where)))
     open_deals = [d for d in deals if d.outcome not in ("not_interested", "lost")]
     quoted = sum(d.quoted_amount or 0 for d in open_deals if d.stage in {"proposal_sent", "negotiating"} | CONTRACTED)
     contracted = sum(d.quoted_amount or 0 for d in deals if d.stage in CONTRACTED)
     all_paid = sum(collected(d) for d in deals)
     month = db.scalar(select(func.coalesce(func.sum(Payment.amount), 0)).join(Deal).where(
-        Deal.campaign_id == campaign_id, Payment.received_on >= month_start, Payment.received_on <= today)) or 0
+        *where, Payment.received_on >= month_start, Payment.received_on <= today)) or 0
     advances = db.scalar(select(func.coalesce(func.sum(Payment.amount), 0)).join(Deal).where(
         Deal.campaign_id == campaign_id, Payment.kind == "advance")) or 0
     return {

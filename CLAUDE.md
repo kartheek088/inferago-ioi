@@ -5,9 +5,16 @@ India). Monorepo: `backend/` (FastAPI + SQLAlchemy 2 + Alembic + SQLite), `front
 
 ## IOI 3.0 at a glance
 
-The active product is `backend/app/ioi3/` (API `/api/v3`) + the rebuilt `frontend/` (Tailwind, 6 sections).
+The active product is `backend/app/ioi3/` (API `/api/v3`) + the rebuilt `frontend/` (Tailwind, 8 sections).
 Legacy modules/tables are kept as an archive; their discovery endpoints return 409 in Chennai scope.
 Users run `./start.sh` / `./stop.sh` (Windows: `start.ps1` / `stop.ps1`).
+
+**Two acquisition channels.** Every shared row carries `channel` = `b2b` | `social_commerce`
+(`ioi_companies`, `ioi_campaigns`, `ioi_jobs`), and each channel has its own campaign, discovery jobs,
+rules and qualification engine (B2B: P0-P3; social: S0-S3). They share identity, contacts, evidence,
+outreach approval, the sales pipeline and payments. `ioi3/core.evaluate()` is the single choke point that
+routes a company to its channel's engine — never add channel checks to callers.
+See `docs/SOCIAL_COMMERCE.md`.
 
 ## Commands
 
@@ -50,6 +57,23 @@ cd frontend && npm run typecheck && npm run build
 - **Agent rules.** Read-only typed tools, company's own domain only, every fact/person needs a verbatim quote from a page fetched
   in that session, hard limits, every step logged. Never add tools that send, submit or write outside IOI.
 - Tests must not hit the live internet — use the `web` fixture (httpx.MockTransport).
+- **Social commerce (channel `social_commerce`).** Instagram, Facebook and WhatsApp profile pages are
+  NEVER fetched: they need a sign-in and their robots.txt restricts automated access. The agent refuses
+  those hosts *by name* (`agent._REFUSED_HOSTS`), so never add them to an allow-list. No DMs, chats,
+  groups, group members or follower lists, ever. A published WhatsApp number is a contact route, not
+  permission to send bulk messages.
+- **Followers are never an input.** A follower count may be recorded when a public profile states it, but
+  it must never reach scoring, qualification or maturity. There is deliberately no follower field on
+  `social.qualify.Snapshot`.
+- **Weak location evidence never counts.** A hashtag, caption language, a follower or a customer comment
+  can never raise a seller's geographic confidence (`social.geo.BASES`). Only `verified_chennai` passes
+  the location gate.
+- **S0 needs a human.** A keyword that looks like a request for help stays a hypothesis until the owner
+  confirms it. Order complexity is an indicator a tool *might* help — never a confirmed problem.
+- **Never promise a Meta API integration.** No app, business account or approved permissions exist;
+  `meta_api` is seeded `needs_setup` and every offer carries that caveat.
+- **Cheapest option first.** Configure what a seller already pays for, or give them a free form, before
+  offering to build. Never replace a working checkout or ask for a domain transfer for a workflow job.
 
 ## Layout (backend/app)
 
@@ -67,6 +91,7 @@ cd frontend && npm run typecheck && npm run build
 | `outreach.py` | drafts, approvals, call tasks, follow-ups |
 | `prospects.py` | prospect finder: OSM/Overpass search, segments, gap scoring, website audit, pitch drafts (`api/prospects.py`) |
 | `chennai.py`, `lead_rules.py`, `leads.py` | Chennai-only lead pipeline (default scope): city-limit geography, two-industry classification, signals, A–D category + sales difficulty, website verification, news signals (`api/leads.py`) |
+| `ioi3/social/` | **Social commerce channel**: `platforms.py` (public profile links; refuses posts, groups, private sites), `geo.py` (Chennai confidence from evidence *basis*), `categories.py` (product categories, order complexity, activity vs demand, sales setup), `qualify.py` (gates, S0-S3, 100-point score, maturity), `solutions.py` (4 offers, cheapest-first), `core.py` (campaign, sources, evidence, evaluate), `collect.py` (profile/CSV/market-page ingestion), `search.py` (authorised search API, honest when absent), `research.py` (readable pages + `record_observation`, the human route for Instagram), `agent.py` (bounded agent, own-domain only), `outreach.py` (draft for a one-person seller), `engine.py` (`SocialRunner`), `api.py` (`/api/v3/social`) |
 | `ioi3/` | **IOI 3.0**: `models.py` (ioi_* tables), `core.py` (campaign, sources, evidence, identity, evaluate), `collect.py` (Overture/CSV/manual → ingest), `research.py` (website + news), `qualify.py` (gates, P0–P3, score, friction, solution), `engine.py` (persistent jobs, worker thread, lock-safe progress), `fetch.py` (page cache, error classes, SQLite lock retry), `agent.py` (bounded tool-calling research agent, audited in ioi_agent_events), `solutions.py` (existing-software fit), `sales.py` (outreach, pipeline, payments), `api.py` |
 | `reset.py` | backup / preview / guarded execute of the old-data reset (CLI only; rows only, never tables) |
 | `documents.py`, `imports.py` | PDF/DOCX tender analysis, manual URL/doc import |

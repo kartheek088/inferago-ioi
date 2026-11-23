@@ -13,6 +13,11 @@ import Outreach from "./pages/Outreach";
 import Research from "./pages/Research";
 import Pipeline from "./pages/Pipeline";
 import Settings from "./pages/Settings";
+import SocialDashboard from "./pages/social/Dashboard";
+import SocialDiscoverPage from "./pages/social/Discover";
+import SocialLeads from "./pages/social/Leads";
+import SocialLeadDetail from "./pages/social/LeadDetail";
+import SocialActivityFeed from "./pages/social/ActivityFeed";
 import Onboarding from "./pages/Onboarding";
 import type { Preflight } from "./lib/types";
 
@@ -66,6 +71,11 @@ export default function App() {
         <Route path="/discover" element={<Discover />} />
         <Route path="/prospects" element={<Prospects />} />
         <Route path="/prospects/:id" element={<ProspectDetail />} />
+        <Route path="/social-commerce" element={<SocialDashboard />} />
+        <Route path="/social-commerce/discover" element={<SocialDiscoverPage />} />
+        <Route path="/social-commerce/leads" element={<SocialLeads />} />
+        <Route path="/social-commerce/leads/:id" element={<SocialLeadDetail />} />
+        <Route path="/social-commerce/activity" element={<SocialActivityFeed />} />
         <Route path="/research" element={<Research />} />
         <Route path="/outreach" element={<Outreach />} />
         <Route path="/pipeline" element={<Pipeline />} />

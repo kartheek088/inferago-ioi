@@ -71,6 +71,13 @@ class Settings(BaseSettings):
     reddit_client_secret: str | None = None
     reddit_user_agent: str | None = None
 
+    # Social-commerce discovery by public web search. Without an authorised key this source reports
+    # itself unavailable; IOI never scrapes a search engine's result pages instead.
+    search_provider: str | None = None  # brave | google_cse
+    search_api_key: str | None = None
+    search_cx: str | None = None  # Google Programmable Search engine id
+    search_max_queries_per_run: int = 12
+
     @property
     def ai_enabled(self) -> bool:
         return self.claude_enabled or bool(self.openrouter_api_key and self.openrouter_model)

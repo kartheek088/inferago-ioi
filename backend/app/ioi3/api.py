@@ -88,7 +88,9 @@ def fact_out(f: Fact) -> dict[str, Any]:
 
 
 def deal_out(d: Deal) -> dict[str, Any]:
-    return {"id": d.id, "company_id": d.company_id, "company": d.company.name, "stage": d.stage, "outcome": d.outcome,
+    return {"id": d.id, "company_id": d.company_id, "company": d.company.name,
+            # Which pipeline the lead came from, so the shared board can label and filter it.
+            "channel": d.company.channel, "stage": d.stage, "outcome": d.outcome,
             "contact_name": d.contact_name, "confirmed_requirement": d.confirmed_requirement, "offer": d.offer,
             "potential_amount": d.potential_amount, "quoted_amount": d.quoted_amount, "expected_payment_date": d.expected_payment_date,
             "delivery_status": d.delivery_status, "next_follow_up_at": d.next_follow_up_at, "notes": d.notes,
@@ -632,19 +634,27 @@ def review_fact(fid: int, body: FactReview, db: Session = DB, who: str = Depends
 # Outreach
 # ------------------------------------------------------------------------------------------------
 @router.get("/outreach")
-def outreach(db: Session = DB):
-    camp = core.active_campaign(db)
-    rows = db.scalars(select(Company).where(Company.campaign_id == camp.id, Company.archived.is_(False),
-                                            Company.outreach_approved_at.is_not(None), Company.review_status != "rejected")
-                      .options(selectinload(Company.facts), selectinload(Company.contacts))
-                      .order_by(Company.next_follow_up_at.is_(None), Company.next_follow_up_at, Company.id)).all()
+def outreach(channel: str | None = Query(None, pattern="^(b2b|social_commerce)$"), db: Session = DB):
+    """Everything approved and waiting to be contacted, from every acquisition channel.
+
+    Outreach is shared, so an approved social seller appears here beside an approved B2B company; each
+    card carries its channel and its channel's own draft wording.
+    """
+    stmt = (select(Company).where(Company.archived.is_(False), Company.outreach_approved_at.is_not(None),
+                                  Company.review_status != "rejected")
+            .options(selectinload(Company.facts), selectinload(Company.contacts))
+            .order_by(Company.next_follow_up_at.is_(None), Company.next_follow_up_at, Company.id))
+    if channel:
+        stmt = stmt.where(Company.channel == channel)
+    rows = db.scalars(stmt).all()
     biz = _business(db)
     out = []
     for c in rows:
         last = db.scalar(select(Activity).where(Activity.company_id == c.id).order_by(Activity.occurred_at.desc()))
         deal = db.scalar(select(Deal).where(Deal.company_id == c.id))
-        out.append({**card(c), "contacts": [{"kind": x.kind, "value": x.value, "official": x.official, "source_url": x.source_url}
-                                            for x in c.contacts],
+        out.append({**card(c), "channel": c.channel,
+                    "contacts": [{"kind": x.kind, "value": x.value, "official": x.official, "source_url": x.source_url}
+                                 for x in c.contacts],
                     "outreach": sales.draft(c, biz.get("sender_name", ""), biz.get("sender_link", "")),
                     "last_activity": {"kind": last.kind, "summary": last.summary, "at": last.occurred_at} if last else None,
                     "deal_stage": deal.stage if deal else None})
@@ -724,13 +734,25 @@ def to_pipeline(cid: int, db: Session = DB, who: str = Depends(actor)):
 # Sales pipeline
 # ------------------------------------------------------------------------------------------------
 @router.get("/pipeline")
-def pipeline(db: Session = DB):
-    camp = core.active_campaign(db)
-    deals = db.scalars(select(Deal).where(Deal.campaign_id == camp.id).options(selectinload(Deal.payments))
-                       .order_by(Deal.updated_at.desc())).all()
+def pipeline(channel: str | None = Query(None, pattern="^(b2b|social_commerce)$"), db: Session = DB):
+    """The shared sales pipeline: deals from every acquisition channel, each tagged with its own.
+
+    Approved leads from B2B discovery and from Social Commerce land in the same tables, so there is one
+    place to see money. `channel` narrows it when you want only one pipeline.
+    """
+    stmt = (select(Deal).join(Company, Company.id == Deal.company_id)
+            .options(selectinload(Deal.payments)).order_by(Deal.updated_at.desc()))
+    if channel:
+        stmt = stmt.where(Company.channel == channel)
+    deals = db.scalars(stmt).all()
+    camp_id = None
+    if channel:
+        camp_id = db.scalar(select(Campaign.id).where(Campaign.channel == channel, Campaign.status == "active")
+                            .order_by(Campaign.id.desc()))
     return {"stages": [{"key": k, "label": v} for k, v in sales.STAGES],
             "outcomes": [{"key": k, "label": v} for k, v in sales.OUTCOMES.items()],
-            "deals": [deal_out(d) for d in deals], "revenue": sales.revenue(db, camp.id), "goal": _business(db)["revenue_goal_monthly"]}
+            "deals": [deal_out(d) for d in deals],
+            "revenue": sales.revenue(db, camp_id), "goal": _business(db)["revenue_goal_monthly"]}
 
 
 class DealPatch(BaseModel):

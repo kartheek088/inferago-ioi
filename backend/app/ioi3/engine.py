@@ -196,6 +196,17 @@ def recover_stale(db: Session) -> int:
     return n
 
 
+def runner_for(channel: str | None):
+    """Which runner executes a job. Each acquisition channel has its own stages and sources."""
+    from app.ioi3 import models
+
+    if channel == models.SOCIAL:
+        from app.ioi3.social.engine import SocialRunner
+
+        return SocialRunner
+    return Runner
+
+
 def run_next(http_factory: Callable[[], SafeHttp] | None = None) -> bool:
     """Run the oldest queued job, if any. Returns True if a job ran. (Called by the worker and by tests.)"""
     global _current_job
@@ -203,10 +214,10 @@ def run_next(http_factory: Callable[[], SafeHttp] | None = None) -> bool:
         job = db.scalar(select(Job).where(Job.status == "queued").order_by(Job.id))
         if job is None:
             return False
-        job_id = job.id
+        job_id, channel = job.id, job.channel
     _current_job = job_id
     try:
-        Runner(job_id, http_factory).run()
+        runner_for(channel)(job_id, http_factory).run()
     except Exception:  # noqa: BLE001 — never let the worker thread die
         log.exception("Discovery job %s crashed", job_id)
         try:
