@@ -14,6 +14,7 @@ from app import jobs
 from app.api import big_projects, chains, core, leads, opportunities, outreach, prospects, sources
 from app.api.deps import require_auth
 from app.ioi3.api import router as ioi3_router
+from app.ioi3.recovery_api import router as recovery_router
 from app.ioi3.social.api import router as social_router
 from app.config import get_settings
 
@@ -107,7 +108,7 @@ def create_app() -> FastAPI:
     )
     app.include_router(core.public, prefix="/api")
     protected = [Depends(require_auth)]
-    for r in (ioi3_router, social_router, core.router, leads.router, sources.router, opportunities.router, outreach.router, prospects.router, big_projects.router, chains.router):
+    for r in (ioi3_router, social_router, recovery_router, core.router, leads.router, sources.router, opportunities.router, outreach.router, prospects.router, big_projects.router, chains.router):
         app.include_router(r, prefix="/api", dependencies=protected)
     _mount_frontend(app)
     return app

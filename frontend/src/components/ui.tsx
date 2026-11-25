@@ -119,8 +119,15 @@ export function ErrorState({ error, onRetry }: { error?: { message: string; stat
   );
 }
 
+/** Only http(s) links are clickable. Stored URLs come from imports and directories, so a `javascript:` or `data:`
+ * value must never become a live link (React 18 still renders those). */
+export function isWebUrl(href: string): boolean {
+  try { return ["http:", "https:"].includes(new URL(href).protocol); } catch { return false; }
+}
+
 export function Ext({ href, children, className }: { href: string | null | undefined; children?: ReactNode; className?: string }) {
   if (!href) return <span className="text-subtle">no link</span>;
+  if (!isWebUrl(href)) return <span className="break-all text-subtle" title="Not an http(s) link">{children ?? href}</span>;
   let label: ReactNode = children;
   if (!label) { try { label = new URL(href).hostname.replace(/^www\./, ""); } catch { label = href; } }
   return <a href={href} target="_blank" rel="noopener noreferrer" className={cn("inline-flex items-center gap-1 break-all", className)}>{label}<ExternalLink className="h-3 w-3 shrink-0" aria-hidden /></a>;

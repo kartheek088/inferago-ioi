@@ -25,14 +25,15 @@ describe("format", () => {
 });
 
 describe("navigation", () => {
-  it("has the eight main sections, with Social Commerce as its own top-level item", () => {
+  it("has the nine main sections, with Website Recovery and Social Commerce as separate top-level items", () => {
     expect(NAV.map((n) => n.label)).toEqual([
-      "Home", "B2B Discovery", "B2B Prospects", "Social Commerce", "Research Intelligence",
+      "Home", "B2B Discovery", "B2B Prospects", "Website Recovery", "Social Commerce", "Research Intelligence",
       "Outreach", "Sales Pipeline", "Settings",
     ]);
     render(<MemoryRouter><Shell><p>content</p></Shell></MemoryRouter>);
     const nav = screen.getByRole("navigation", { name: "Main" });
-    expect(within(nav).getAllByRole("link")).toHaveLength(8);
+    expect(within(nav).getAllByRole("link")).toHaveLength(9);
+    expect(within(nav).getByRole("link", { name: "Website Recovery" })).toHaveAttribute("href", "/website-recovery");
   });
 
   it("puts Social Commerce at /social-commerce, not under Discover, Prospects or Settings", () => {

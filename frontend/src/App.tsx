@@ -13,6 +13,7 @@ import Outreach from "./pages/Outreach";
 import Research from "./pages/Research";
 import Pipeline from "./pages/Pipeline";
 import Settings from "./pages/Settings";
+import RecoveryDashboard from "./pages/recovery/Dashboard";
 import SocialDashboard from "./pages/social/Dashboard";
 import SocialDiscoverPage from "./pages/social/Discover";
 import SocialLeads from "./pages/social/Leads";
@@ -71,6 +72,7 @@ export default function App() {
         <Route path="/discover" element={<Discover />} />
         <Route path="/prospects" element={<Prospects />} />
         <Route path="/prospects/:id" element={<ProspectDetail />} />
+        <Route path="/website-recovery" element={<RecoveryDashboard />} />
         <Route path="/social-commerce" element={<SocialDashboard />} />
         <Route path="/social-commerce/discover" element={<SocialDiscoverPage />} />
         <Route path="/social-commerce/leads" element={<SocialLeads />} />

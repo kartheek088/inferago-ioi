@@ -1,6 +1,6 @@
 # Build status
 
-_Last updated: 2026-11-23 (Social Commerce Intelligence)_
+_Last updated: 2026-11-26 (Website Recovery — health checks)_
 
 ## Verification (all run locally)
 
@@ -17,6 +17,45 @@ _Last updated: 2026-11-23 (Social Commerce Intelligence)_
 | UI rendering with real data | Checked via headless Chrome screenshots (Overview, Opportunities, Detail, Sources) |
 
 `scripts/test.sh` runs the full suite.
+
+## Website Recovery — health checks (2026-11-26)
+
+Hypothesis from the owner's own calls: active businesses with a broken own-website engaged; businesses with a
+working site did not. Two interested prospects is early evidence, not a conversion rate. A broken website is
+never treated as buying intent.
+
+Branch `feature/website-recovery-osint`, migration `0014_website_recovery` (additive: `ioi_website_checks`).
+Menu item **Website Recovery** (`/website-recovery`), separate from B2B Discovery and Social Commerce.
+
+**Built (P1):**
+- `ioi3/website_recovery.py`: one GET per site through `SafeHttp` (SSRF guard re-validated on every redirect hop,
+  robots.txt, rate limit, 2 MB cap). No port scans, path guessing, logins or challenge bypass.
+- Classification: `healthy`, `unhealthy_suspected`, `unhealthy_confirmed`, `redirected_to_active_site`,
+  `migrated_to_storefront`, `access_restricted`, `network_failure`, `unknown`; specific failure kept in
+  `observed_class` (`not_found`, `server_error`, `domain_expired_or_unresolved`, `tls_problem`, `placeholder_or_parked`).
+- False-positive guards: 403/429 and bot-challenge pages are `access_restricted`, never an outage; our timeouts are
+  `network_failure`; SSRF-policy refusals are `unknown`; parked/default/suspended pages on HTTP 200 are failures;
+  a parked page behind a redirect is still a failure; redirects to a marketplace/hosted store are `migrated_to_storefront`.
+- Confirmation: one observation is only ever `unhealthy_suspected`. It becomes `unhealthy_confirmed` when the same
+  failure is seen again ≥ 24 h later. Sites checked < 24 h ago are skipped unless forced. History is never overwritten.
+- Independent DNS: after a local DNS failure, Cloudflare and Google DNS-over-HTTPS are asked (domain name only).
+  If either resolves it → `network_failure` (our DNS). NXDOMAIN at both → medium confidence, still needs the recheck.
+- Privacy: no page HTML is stored — only status codes, classification, short error text and reasons.
+- API `/api/v3/recovery/{overview,companies,companies/{id},check}` behind the normal auth; batch capped at 25.
+
+**Real-source validation (20 existing companies, live network, 2026-11-26):** 20 checked in 168 s, 0 errors.
+First pass found a bug: the generic word "captcha" matched contact-form captchas on two working sites (a CSS class,
+a Contact Form 7 plugin). Fixed — generic words now count only on near-empty pages; regression tests added. After the
+fix: 14 working, 2 access restricted (one HTTP 403, one LiteSpeed reCAPTCHA challenge), 3 domains NXDOMAIN here and
+at Cloudflare + Google (pending the 24 h recheck), 1 redirect loop (`unknown`). **0 confirmed failures, 0 R1 leads** —
+by design until the recheck, and because activity/contact research is not built yet.
+
+**Not built yet (P2–P4 of the brief):** business-activity OSINT, marketplace/storefront footprint search, public
+business-contact review, R0–R3 qualification gates, dossier sections 3–9, sales feedback fields, background jobs
+with stop/retry, quick/balanced/deep modes, export. The page says so; there are no buttons for them.
+
+**Scope note:** checks run on every B2B company with its own website (Chennai campaign). The brief asked not to
+restrict industries; CLAUDE.md's two-industry rule was left as the campaign default — owner to decide.
 
 ## Social Commerce Intelligence (2026-11-23)
 

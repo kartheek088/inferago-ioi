@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { NavLink, useLocation } from "react-router-dom";
-import { Compass, FileSearch, Home, KanbanSquare, Moon, Send, Settings, ShoppingBag, Sun, Users } from "lucide-react";
+import { Compass, FileSearch, Globe, Home, KanbanSquare, Moon, Send, Settings, ShoppingBag, Sun, Users } from "lucide-react";
 import { cn } from "../lib/format";
 
 /** The two discovery pipelines are separate top-level destinations, never nested inside each other. */
@@ -8,6 +8,7 @@ export const NAV = [
   { to: "/", label: "Home", icon: Home, short: "Home", mobile: true },
   { to: "/discover", label: "B2B Discovery", icon: Compass, short: "B2B" },
   { to: "/prospects", label: "B2B Prospects", icon: Users, short: "Leads", mobile: true },
+  { to: "/website-recovery", label: "Website Recovery", icon: Globe, short: "Websites" },
   { to: "/social-commerce", label: "Social Commerce", icon: ShoppingBag, short: "Social", mobile: true },
   { to: "/research", label: "Research Intelligence", icon: FileSearch, short: "Research" },
   { to: "/outreach", label: "Outreach", icon: Send, short: "Outreach", mobile: true },

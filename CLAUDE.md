@@ -5,7 +5,7 @@ India). Monorepo: `backend/` (FastAPI + SQLAlchemy 2 + Alembic + SQLite), `front
 
 ## IOI 3.0 at a glance
 
-The active product is `backend/app/ioi3/` (API `/api/v3`) + the rebuilt `frontend/` (Tailwind, 8 sections).
+The active product is `backend/app/ioi3/` (API `/api/v3`) + the rebuilt `frontend/` (Tailwind, 9 sections incl. Website Recovery).
 Legacy modules/tables are kept as an archive; their discovery endpoints return 409 in Chennai scope.
 Users run `./start.sh` / `./stop.sh` (Windows: `start.ps1` / `stop.ps1`).
 
@@ -72,6 +72,11 @@ cd frontend && npm run typecheck && npm run build
   confirms it. Order complexity is an indicator a tool *might* help — never a confirmed problem.
 - **Never promise a Meta API integration.** No app, business account or approved permissions exist;
   `meta_api` is seeded `needs_setup` and every offer carries that caveat.
+- **Website Recovery (`ioi3/website_recovery.py`).** One GET per site via `SafeHttp`; never scan ports or paths, log
+  in or bypass a challenge. One observation is only `unhealthy_suspected`; `unhealthy_confirmed` needs the same failure
+  again ≥ 24 h later. 403/429/bot challenges are `access_restricted`, never an outage. Generic words like "captcha"
+  count only on near-empty pages (working contact forms contain them). Never store page HTML. A broken website is not
+  buying intent.
 - **Cheapest option first.** Configure what a seller already pays for, or give them a free form, before
   offering to build. Never replace a working checkout or ask for a domain transfer for a workflow job.
 

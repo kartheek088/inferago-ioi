@@ -524,3 +524,30 @@ class SocialProfile(_Stamped, Base):
     pages_checked: Mapped[list[str]] = mapped_column(JSON, default=list)
 
     company: Mapped["Company"] = relationship(back_populates="social")
+
+
+class WebsiteCheck(Base):
+    """One low-impact health check of a company's own website (Website Recovery).
+
+    Stores classification and short error text only, never the page HTML. History is kept, so a failure
+    can be confirmed by a later recheck and a recovery is never erased.
+    """
+
+    __tablename__ = "ioi_website_checks"
+    __table_args__ = (Index("ix_ioi_web_check_company_time", "company_id", "checked_at"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("ioi_companies.id", ondelete="CASCADE"), index=True)
+    website_url: Mapped[str] = mapped_column(String(2048))
+    checked_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
+    method: Mapped[str] = mapped_column(String(40), default="http_get_v1")
+    dns_result: Mapped[str] = mapped_column(String(20))  # ok | unresolved | policy_blocked
+    http_status: Mapped[int | None] = mapped_column(Integer)
+    final_url: Mapped[str | None] = mapped_column(String(2048))
+    tls_result: Mapped[str | None] = mapped_column(String(20))  # ok | problem | None (not reached)
+    error_kind: Mapped[str | None] = mapped_column(String(20))  # timeout | refused | tls | robots | other
+    error_text: Mapped[str | None] = mapped_column(String(300))
+    observed_class: Mapped[str | None] = mapped_column(String(40))  # the specific failure seen this time
+    status: Mapped[str] = mapped_column(String(40), index=True)  # overall Website Recovery status
+    confidence: Mapped[str] = mapped_column(String(10))  # high | medium | low
+    reasons: Mapped[list[str]] = mapped_column(JSON, default=list)
