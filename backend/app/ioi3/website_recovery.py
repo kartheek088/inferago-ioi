@@ -37,14 +37,6 @@ OBSERVED_FAILURES = (
 )
 HARD_FAILURES = frozenset(OBSERVED_FAILURES)
 
-# Dashboard tabs (brief section 15). Each tab is a set of overall statuses.
-TABS: dict[str, tuple[str, ...]] = {
-    "high_priority": ("unhealthy_confirmed",),
-    "needs_verification": ("unhealthy_suspected", "network_failure", "unknown", "access_restricted"),
-    "migrated": ("redirected_to_active_site", "migrated_to_storefront"),
-    "excluded": ("healthy",),
-}
-
 # Directory and social hosts are not a company's own website: never checked as one.
 NOT_OWN_SITE = (
     "instagram.com", "facebook.com", "fb.com", "wa.me", "whatsapp.com", "linktr.ee", "youtube.com",
@@ -280,23 +272,34 @@ def _latest_ids():
 
 
 def candidates(db: Session, *, company_ids: list[int] | None, limit: int, force: bool, recheck_hours: float,
-               now: datetime) -> tuple[list[tuple[int, str]], int]:
-    """Companies with an own website that are due a check. Returns (todo, skipped_recently_checked)."""
+               now: datetime, min_confirm_hours: float = 24) -> tuple[list[tuple[int, str]], int]:
+    """Companies with an own website that are due a check. Returns (todo, skipped_recently_checked).
+
+    Order: suspected failures that are due their confirming recheck first, then never-checked sites, then the rest.
+    """
     q = select(Company.id, Company.website).where(Company.channel == B2B, Company.website.is_not(None))
     if company_ids:
         q = q.where(Company.id.in_(company_ids))
     rows = [(cid, normalise_url(w)) for cid, w in db.execute(q.order_by(Company.id)).all() if w and is_own_site(normalise_url(w))]
-    last = dict(db.execute(select(WebsiteCheck.company_id, func.max(WebsiteCheck.checked_at)).group_by(WebsiteCheck.company_id)).all())
+    latest = {c.company_id: c for c in db.scalars(select(WebsiteCheck).where(WebsiteCheck.id.in_(_latest_ids())))}
+
+    def rank(item: tuple[int, str]) -> int:
+        chk = latest.get(item[0])
+        if chk is None:
+            return 1
+        if chk.status == "unhealthy_suspected" and now - chk.checked_at >= timedelta(hours=min_confirm_hours):
+            return 0
+        return 2
+
     todo: list[tuple[int, str]] = []
     skipped = 0
-    for cid, url in rows:
-        seen = last.get(cid)
-        if not force and seen is not None and now - seen < timedelta(hours=recheck_hours):
+    for cid, url in sorted(rows, key=rank):  # stable: keeps id order inside each group
+        chk = latest.get(cid)
+        if not force and chk is not None and now - chk.checked_at < timedelta(hours=recheck_hours):
             skipped += 1
             continue
-        todo.append((cid, url))
-        if len(todo) >= limit:
-            break
+        if len(todo) < limit:
+            todo.append((cid, url))
     return todo, skipped
 
 
@@ -311,16 +314,23 @@ def _prior_seen(db: Session, company_id: int, observed: str) -> datetime | None:
 
 
 def run_checks(db: Session, *, company_ids: list[int] | None = None, limit: int = 10, force: bool = False,
-               recheck_hours: float = 24, min_confirm_hours: float = 24, http: SafeHttp | None = None) -> dict:
-    """Check up to `limit` own-website URLs sequentially. Each DB write is its own short transaction."""
+               recheck_hours: float = 24, min_confirm_hours: float = 24, http: SafeHttp | None = None,
+               look_for_alternatives: bool = True) -> dict:
+    """Check up to `limit` own-website URLs sequentially. Each DB write is its own short transaction.
+
+    When a site fails, its own email domain / directory record is checked for a newer working site (≤ 3 GETs).
+    """
+    from app.ioi3 import recovery_intel  # local import: recovery_intel builds on this module
+
     limit = max(1, min(int(limit), MAX_PER_RUN))
     http = http or SafeHttp(respect_robots=True, rate_limit_per_minute=20, max_bytes=2_000_000)
     now = utcnow()
-    todo, skipped = candidates(db, company_ids=company_ids, limit=limit, force=force, recheck_hours=recheck_hours, now=now)
+    todo, skipped = candidates(db, company_ids=company_ids, limit=limit, force=force, recheck_hours=recheck_hours,
+                               now=now, min_confirm_hours=min_confirm_hours)
     db.rollback()  # no transaction stays open across the network calls below
     summary: dict = {"checked": 0, "skipped_recent": skipped, "failures_detected": 0, "confirmed": 0,
                      "network_failures": 0, "blocked_by_policy": 0, "access_restricted": 0, "errors": 0,
-                     "independent_dns_lookups": 0, "results": []}
+                     "independent_dns_lookups": 0, "alternatives_checked": 0, "alternatives_working": 0, "results": []}
     for cid, url in todo:
         try:
             obs = probe(url, http)
@@ -340,6 +350,10 @@ def run_checks(db: Session, *, company_ids: list[int] | None = None, limit: int 
                 ))
 
             fetch.short_write(_write)
+            if look_for_alternatives and verdict.status in ("unhealthy_suspected", "unhealthy_confirmed"):
+                alts = recovery_intel.find_alternatives(cid, http)
+                summary["alternatives_checked"] += len(alts)
+                summary["alternatives_working"] += sum(1 for a in alts if a["status"] == "healthy")
         except Exception:  # one bad site must not stop the run; the error is counted, not hidden
             summary["errors"] += 1
             continue
@@ -375,29 +389,11 @@ def overview(db: Session) -> dict:
         "websites_checked": len(latest_rows),
         "checks_recorded": checks_total,
         "by_status": by_status,
-        "high_priority": by_status.get("unhealthy_confirmed", 0),
-        "needs_verification": sum(by_status.get(s, 0) for s in TABS["needs_verification"]),
-        "migrated": sum(by_status.get(s, 0) for s in TABS["migrated"]),
-        "excluded": by_status.get("healthy", 0),
+        "failures_detected": by_status.get("unhealthy_suspected", 0) + by_status.get("unhealthy_confirmed", 0),
+        "pending_confirmation": by_status.get("unhealthy_suspected", 0),
+        "confirmed": by_status.get("unhealthy_confirmed", 0),
     }
 
-
-def list_tab(db: Session, tab: str, limit: int = 200) -> list[dict]:
-    statuses = TABS.get(tab)
-    if statuses is None:
-        raise ValueError(f"unknown tab {tab}")
-    rows = db.execute(
-        select(WebsiteCheck, Company.name, Company.locality)
-        .join(Company, Company.id == WebsiteCheck.company_id)
-        .where(WebsiteCheck.id.in_(_latest_ids()), WebsiteCheck.status.in_(statuses))
-        .order_by(WebsiteCheck.checked_at.desc()).limit(limit)
-    ).all()
-    return [{
-        "company_id": c.company_id, "name": name, "locality": loc, "website": c.website_url,
-        "status": c.status, "observed_class": c.observed_class, "confidence": c.confidence,
-        "reasons": c.reasons or [], "final_url": c.final_url, "http_status": c.http_status,
-        "checked_at": c.checked_at.isoformat(),
-    } for c, name, loc in rows]
 
 
 def dossier(db: Session, company_id: int, limit: int = 20) -> dict | None:

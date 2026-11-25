@@ -50,12 +50,32 @@ fix: 14 working, 2 access restricted (one HTTP 403, one LiteSpeed reCAPTCHA chal
 at Cloudflare + Google (pending the 24 h recheck), 1 redirect loop (`unknown`). **0 confirmed failures, 0 R1 leads** —
 by design until the recheck, and because activity/contact research is not built yet.
 
-**Not built yet (P2–P4 of the brief):** business-activity OSINT, marketplace/storefront footprint search, public
-business-contact review, R0–R3 qualification gates, dossier sections 3–9, sales feedback fields, background jobs
-with stop/retry, quick/balanced/deep modes, export. The page says so; there are no buttons for them.
+**Built (P2/P3, same day, migrations `0015_recovery_activity`, `0016_contact_reviews`):**
+- `ioi3/recovery_intel.py`. **Is it still operating?** (`active_verified` / `active_probable` / `activity_unclear` /
+  `inactive_suspected` / `closed_verified`) from dated evidence only, window 30/60/90/180 days (owner setting).
+  A call where the business answers verifies it; otherwise two independent dated sources (same host = one source).
+  Undated listings never count; publication date ≠ crawl date. Owner records go in `ioi_activity_evidence`
+  (`method=manual`), kept apart from automatic facts. Notes are rejected if they contain phone numbers or emails.
+- **Check it yourself** links (Google searches incl. `site:facebook.com / instagram.com / indiamart.com /
+  justdial.com`) open in the owner's browser; IOI never fetches those sites (test asserts zero outbound calls).
+- **Newer website**: after a failure, the business's own non-free email domain and directory-record websites are
+  health-checked (≤ 3 GETs). Gmail/Yahoo/etc. are never used to guess a site. A working one → Migrated / Storefront.
+- **Contacts**: business-level view; directory mobiles and free-mail addresses are flagged "may be personal" and do
+  not pass the contact gate until the owner approves them ("It's the business line") in `ioi_contact_reviews`.
+- **R0–R3 with explicit gates** (identity, Chennai confirmed, target business type, failure confirmed, operating,
+  no replacement, usable contact, feasible). R1 only if all pass; R0 only from an owner-recorded confirmed need.
+  Tabs: High-Priority = R0/R1, Needs Verification = R2, Migrated / Storefront, Excluded.
+- **Who to target** (owner answer 2026-11-26: "not everyone — the industries we can reach and help"): a setting of
+  business types inside the campaign's two industries. Default = all of them; the owner unticks the rest.
+  Out-of-scope types are R3. The two-industry campaign rule is unchanged.
+- Chennai: a call can confirm the address (owner verification, per CLAUDE.md); directory-only stays unconfirmed.
 
-**Scope note:** checks run on every B2B company with its own website (Chennai campaign). The brief asked not to
-restrict industries; CLAUDE.md's two-industry rule was left as the campaign default — owner to decide.
+**Live finding after P3:** every Needs-Verification business had only directory mobiles / Gmail on file, so the
+contact gate could never pass — which is why owner contact review was added.
+
+**Not built yet (P4):** sales-feedback fields (response, vendor, quote, lost reason) and channel comparison
+metrics, background jobs with stop/retry, quick/balanced/deep modes, approved-lead export, automatic news matching
+for recovery leads, hooking contact approval into the Outreach queue.
 
 ## Social Commerce Intelligence (2026-11-23)
 

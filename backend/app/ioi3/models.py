@@ -551,3 +551,56 @@ class WebsiteCheck(Base):
     status: Mapped[str] = mapped_column(String(40), index=True)  # overall Website Recovery status
     confidence: Mapped[str] = mapped_column(String(10))  # high | medium | low
     reasons: Mapped[list[str]] = mapped_column(JSON, default=list)
+
+
+class ActivityEvidence(Base):
+    """Dated evidence that a business is (or is not) still operating. Website Recovery, brief section 6.
+
+    `method` keeps owner observations (manual) apart from automatically verified facts. `published_on` is when the
+    source published it (never a crawl date); `observed_on` is when it was seen. Business facts only: free text is
+    screened for phone numbers and email addresses before it is stored.
+    """
+
+    __tablename__ = "ioi_activity_evidence"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("ioi_companies.id", ondelete="CASCADE"), index=True)
+    kind: Mapped[str] = mapped_column(String(30))  # phone_call | official_social | marketplace_listing | official_website | news | other | confirmed_need
+    signal: Mapped[str] = mapped_column(String(20))  # active | inactive | closed
+    statement: Mapped[str] = mapped_column(String(500))
+    source_url: Mapped[str | None] = mapped_column(String(2048))
+    published_on: Mapped[date | None] = mapped_column(Date)
+    observed_on: Mapped[date] = mapped_column(Date)
+    method: Mapped[str] = mapped_column(String(20), default="manual")  # manual | automatic
+    recorded_by: Mapped[str | None] = mapped_column(String(80))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class AlternativeSite(Base):
+    """A possible newer website for a business whose listed site is failing (found from its own email domain or
+    directory record), with the result of one health check."""
+
+    __tablename__ = "ioi_alt_sites"
+    __table_args__ = (UniqueConstraint("company_id", "url", name="uq_ioi_alt_site"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("ioi_companies.id", ondelete="CASCADE"), index=True)
+    url: Mapped[str] = mapped_column(String(2048))
+    found_via: Mapped[str] = mapped_column(String(40))  # email_domain | directory_listing
+    status: Mapped[str] = mapped_column(String(40))
+    reason: Mapped[str | None] = mapped_column(String(300))
+    checked_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class ContactReview(Base):
+    """The owner's decision on a contact that needs review (e.g. a directory mobile that may be a person's own
+    number). Only approved contacts pass the Website Recovery contact gate. Additive: ioi_contacts is untouched."""
+
+    __tablename__ = "ioi_contact_reviews"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    contact_id: Mapped[int] = mapped_column(ForeignKey("ioi_contacts.id", ondelete="CASCADE"), unique=True, index=True)
+    decision: Mapped[str] = mapped_column(String(20))  # approved | rejected
+    note: Mapped[str | None] = mapped_column(String(200))
+    reviewed_by: Mapped[str | None] = mapped_column(String(80))
+    reviewed_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)

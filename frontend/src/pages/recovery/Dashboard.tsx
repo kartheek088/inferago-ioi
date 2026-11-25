@@ -1,11 +1,14 @@
-import { useState } from "react";
-import { ChevronDown, ChevronRight, Globe, RefreshCw, ShieldAlert, TriangleAlert, CheckCircle2, ArrowRightLeft } from "lucide-react";
-import { Badge, Button, Card, Empty, ErrorState, Ext, Notice, PageHeader, Spinner, Stat, Tabs } from "../../components/ui";
+import { useEffect, useState } from "react";
+import { ChevronDown, ChevronRight, Globe, RefreshCw, ShieldAlert, TriangleAlert, CheckCircle2, Activity, Star, SlidersHorizontal } from "lucide-react";
+import { Button, Card, Empty, ErrorState, Notice, PageHeader, Select, Spinner, Stat, Tabs } from "../../components/ui";
 import { api } from "../../lib/api";
 import { ago } from "../../lib/format";
 import { useQuery } from "../../lib/hooks";
+import { ACTIVITY, Dossier, QUAL, STATUS, Tag } from "./Dossier";
 
-type Tone = "brand" | "ok" | "warn" | "bad" | "info" | "neutral";
+export { STATUS } from "./Dossier";
+
+type Scope = { categories: string[] | null; window_days: number };
 
 export type RecoveryOverview = {
   businesses_discovered: number;
@@ -13,89 +16,47 @@ export type RecoveryOverview = {
   websites_checked: number;
   checks_recorded: number;
   by_status: Record<string, number>;
+  failures_detected: number;
+  pending_confirmation: number;
+  confirmed: number;
   high_priority: number;
   needs_verification: number;
   migrated: number;
   excluded: number;
+  r0: number;
+  r1: number;
+  active_verified: number;
+  alternatives_found: number;
+  with_usable_contact: number;
+  scope: Scope;
 };
 
 export type RecoveryItem = {
   company_id: number;
   name: string;
   locality: string | null;
+  business_type: string;
   website: string;
   status: string;
   observed_class: string | null;
   confidence: string;
   reasons: string[];
-  final_url: string | null;
-  http_status: number | null;
   checked_at: string;
-};
-
-type Check = {
-  checked_at: string; status: string; observed_class: string | null; confidence: string; dns: string;
-  http_status: number | null; final_url: string | null; tls: string | null; error_kind: string | null;
-  error_text: string | null; reasons: string[];
+  qualification: string;
+  bucket: string;
+  summary: string;
+  activity: string;
 };
 
 type RunSummary = {
   checked: number; skipped_recent: number; failures_detected: number; confirmed: number;
-  network_failures: number; blocked_by_policy: number; access_restricted: number; errors: number;
-};
-
-/** Plain-language labels (brief §15). A 403 or bot challenge never reads as an outage. */
-export const STATUS: Record<string, { label: string; tone: Tone }> = {
-  healthy: { label: "Website working", tone: "ok" },
-  unhealthy_confirmed: { label: "Website failure confirmed", tone: "bad" },
-  unhealthy_suspected: { label: "Website may be unavailable", tone: "warn" },
-  redirected_to_active_site: { label: "Website redirected", tone: "info" },
-  migrated_to_storefront: { label: "New website / storefront found", tone: "info" },
-  access_restricted: { label: "Website access restricted", tone: "neutral" },
-  network_failure: { label: "Could not verify (network)", tone: "neutral" },
-  unknown: { label: "Could not verify", tone: "neutral" },
-};
-
-const OBSERVED: Record<string, string> = {
-  not_found: "Page not found",
-  server_error: "Server error",
-  domain_expired_or_unresolved: "Domain not resolving",
-  tls_problem: "HTTPS / certificate problem",
-  placeholder_or_parked: "Placeholder, parked or suspended page",
+  network_failures: number; access_restricted: number; errors: number; alternatives_working?: number;
 };
 
 type TabId = "high_priority" | "needs_verification" | "migrated" | "excluded";
+const nice = (s: string) => s.replace(/_/g, " ");
 
-function StatusBadge({ status }: { status: string }) {
-  const s = STATUS[status] ?? { label: status, tone: "neutral" as Tone };
-  return <Badge tone={s.tone}>{s.label}</Badge>;
-}
-
-function History({ id }: { id: number }) {
-  const q = useQuery(() => api.get<{ checks: Check[] }>(`/recovery/companies/${id}`), [id]);
-  if (q.loading && !q.data) return <Spinner />;
-  if (q.error) return <ErrorState error={q.error} onRetry={q.reload} />;
-  return (
-    <ol className="space-y-2 text-sm">
-      {q.data?.checks.map((c, i) => (
-        <li key={i} className="rounded-lg border border-border/70 p-2">
-          <div className="flex flex-wrap items-center gap-2">
-            <StatusBadge status={c.status} />
-            {c.observed_class && <span className="text-subtle">{OBSERVED[c.observed_class] ?? c.observed_class}</span>}
-            <span className="text-subtle">· {ago(c.checked_at)} · confidence {c.confidence}</span>
-          </div>
-          <div className="mt-1 text-xs text-subtle">
-            DNS {c.dns}{c.http_status != null && <> · HTTP {c.http_status}</>}{c.tls && <> · TLS {c.tls}</>}
-            {c.error_kind && <> · {c.error_kind}</>}{c.final_url && <> · ended at {c.final_url}</>}
-          </div>
-          {c.reasons.length > 0 && <ul className="mt-1 list-disc pl-5 text-xs">{c.reasons.map((r, j) => <li key={j}>{r}</li>)}</ul>}
-        </li>
-      ))}
-    </ol>
-  );
-}
-
-function Row({ item }: { item: RecoveryItem }) {
+function Row({ item, onChanged }: { item: RecoveryItem; onChanged: () => void }) {
   const [open, setOpen] = useState(false);
   return (
     <li className="border-b border-border/70 last:border-0">
@@ -106,21 +67,87 @@ function Row({ item }: { item: RecoveryItem }) {
           <div className="flex flex-wrap items-center gap-2">
             <span className="font-medium">{item.name}</span>
             {item.locality && <span className="text-xs text-subtle">{item.locality}</span>}
-            <StatusBadge status={item.status} />
+            <Tag map={QUAL} value={item.qualification} />
+            <Tag map={STATUS} value={item.status} />
+            <Tag map={ACTIVITY} value={item.activity} />
           </div>
           <div className="mt-0.5 truncate text-xs text-subtle">
-            {item.observed_class ? `${OBSERVED[item.observed_class] ?? item.observed_class} · ` : ""}
-            {item.reasons[0] ?? ""} · checked {ago(item.checked_at)}
+            {nice(item.business_type)} · {item.summary} · checked {ago(item.checked_at)}
           </div>
         </div>
       </button>
+      {open && <div className="pb-4 pl-8 pr-1"><Dossier id={item.company_id} onChanged={onChanged} /></div>}
+    </li>
+  );
+}
+
+function ScopeCard({ onSaved }: { onSaved: () => void }) {
+  const q = useQuery(() => api.get<Scope & { available: { industry: string; category: string; count: number }[] }>("/recovery/scope"), []);
+  const [open, setOpen] = useState(false);
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  const [windowDays, setWindowDays] = useState(90);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  useEffect(() => {
+    if (!q.data) return;
+    setPicked(new Set(q.data.categories ?? q.data.available.map((a) => a.category)));
+    setWindowDays(q.data.window_days);
+  }, [q.data]);
+  if (!q.data) return q.error ? <ErrorState error={q.error} onRetry={q.reload} /> : null;
+  const avail = q.data.available;
+  const all = q.data.categories === null;
+  const industries = [...new Set(avail.map((a) => a.industry))];
+
+  async function save() {
+    setBusy(true); setErr(null);
+    try {
+      const everything = avail.every((a) => picked.has(a.category));
+      await api.put("/recovery/scope", { categories: everything ? null : [...picked], window_days: windowDays });
+      await q.reload();
+      onSaved();
+      setOpen(false);
+    } catch (x) {
+      setErr(x instanceof Error ? x.message : String(x));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Card title="Who to target"
+      description={all ? "Every business type in your two industries. Untick the ones you can't reach or help."
+        : `${q.data.categories?.length ?? 0} business types selected · activity window ${q.data.window_days} days`}
+      action={<Button size="sm" variant="secondary" onClick={() => setOpen((o) => !o)}><SlidersHorizontal className="h-4 w-4" /> {open ? "Close" : "Change"}</Button>}>
       {open && (
-        <div className="space-y-2 pb-4 pl-8 pr-1">
-          <div className="text-sm"><Ext href={item.website}>{item.website}</Ext></div>
-          <History id={item.company_id} />
+        <div className="space-y-3">
+          {industries.map((ind) => (
+            <fieldset key={ind}>
+              <legend className="mb-1 text-xs font-semibold uppercase tracking-wide text-subtle">{nice(ind)}</legend>
+              <div className="grid gap-1 sm:grid-cols-2 lg:grid-cols-3">
+                {avail.filter((a) => a.industry === ind).map((a) => (
+                  <label key={a.category} className="flex items-center gap-2 text-sm">
+                    <input type="checkbox" checked={picked.has(a.category)} onChange={(e) => {
+                      const next = new Set(picked);
+                      if (e.target.checked) next.add(a.category); else next.delete(a.category);
+                      setPicked(next);
+                    }} />
+                    {nice(a.category)} <span className="text-subtle">({a.count})</span>
+                  </label>
+                ))}
+              </div>
+            </fieldset>
+          ))}
+          <label className="flex items-center gap-2 text-sm">
+            Count activity from the last
+            <Select value={windowDays} onChange={(e) => setWindowDays(Number(e.target.value))} aria-label="Activity window">
+              {[30, 60, 90, 180].map((w) => <option key={w} value={w}>{w} days</option>)}
+            </Select>
+          </label>
+          {err && <Notice kind="err">{err}</Notice>}
+          <Button size="sm" onClick={save} loading={busy} disabled={busy}>Save</Button>
         </div>
       )}
-    </li>
+    </Card>
   );
 }
 
@@ -131,6 +158,7 @@ export default function RecoveryDashboard() {
   const [runErr, setRunErr] = useState<string | null>(null);
   const ov = useQuery(() => api.get<RecoveryOverview>("/recovery/overview"), []);
   const list = useQuery(() => api.get<{ items: RecoveryItem[] }>("/recovery/companies", { tab }), [tab]);
+  const reloadAll = () => { ov.reload(); list.reload(); };
 
   async function check(force = false) {
     setBusy(true); setRunErr(null);
@@ -155,9 +183,9 @@ export default function RecoveryDashboard() {
         </>} />
 
       <Notice kind="info">
-        This view checks website health only, one request per site. Sites checked in the last 24 hours are skipped unless you
-        press Recheck. A failure is confirmed only when the same failure is seen again at least 24 hours later.
-        Business-activity research, marketplace footprint and contact review are not built yet.
+        One request per site. Failures waiting for their 24-hour recheck are checked first. A lead becomes High-Priority
+        only when every gate passes — including that the business is still operating, which you confirm by calling them or
+        recording what you see on their own pages. IOI never visits Facebook, Instagram, IndiaMART or Justdial itself.
       </Notice>
 
       {runErr && <Notice kind="err">{runErr}</Notice>}
@@ -165,18 +193,20 @@ export default function RecoveryDashboard() {
         <Notice kind="ok">
           This run: {run.checked} checked, {run.skipped_recent} skipped (checked recently), {run.failures_detected} failures
           ({run.confirmed} confirmed), {run.access_restricted} access restricted, {run.network_failures} network problems,
-          {" "}{run.errors} errors.
+          {" "}{run.alternatives_working ?? 0} newer sites found, {run.errors} errors.
         </Notice>
       )}
 
       {ov.error ? <ErrorState error={ov.error} onRetry={ov.reload} /> : !o ? <Spinner /> : (
         <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-          <Stat label="B2B businesses" value={o.businesses_discovered} hint={`${o.with_own_website} with their own website`} icon={<Globe className="h-4 w-4" />} />
-          <Stat label="Websites checked" value={o.websites_checked} hint={`${o.checks_recorded} checks recorded`} icon={<CheckCircle2 className="h-4 w-4" />} tone="info" />
-          <Stat label="Failures confirmed" value={o.high_priority} hint={`${o.by_status.unhealthy_suspected ?? 0} pending confirmation`} icon={<TriangleAlert className="h-4 w-4" />} tone="bad" />
-          <Stat label="Moved / restricted" value={o.migrated} hint={`${o.by_status.access_restricted ?? 0} access restricted`} icon={<ArrowRightLeft className="h-4 w-4" />} tone="neutral" />
+          <Stat label="Websites checked" value={o.websites_checked} hint={`${o.with_own_website} of ${o.businesses_discovered} have their own site`} icon={<CheckCircle2 className="h-4 w-4" />} tone="info" />
+          <Stat label="Failures confirmed" value={o.confirmed} hint={`${o.pending_confirmation} waiting for the 24 h recheck`} icon={<TriangleAlert className="h-4 w-4" />} tone="bad" />
+          <Stat label="Operating — verified" value={o.active_verified} hint={`${o.alternatives_found} moved to a newer site`} icon={<Activity className="h-4 w-4" />} tone="ok" />
+          <Stat label="High-Priority" value={o.high_priority} hint={`R1 ${o.r1} · R0 ${o.r0} (confirmed need)`} icon={<Star className="h-4 w-4" />} />
         </div>
       )}
+
+      <ScopeCard onSaved={reloadAll} />
 
       <Card>
         <Tabs<TabId> value={tab} onChange={setTab} tabs={[
@@ -191,11 +221,11 @@ export default function RecoveryDashboard() {
             : !list.data?.items.length ? (
               <Empty icon={<ShieldAlert className="h-5 w-5" />} title="Nothing here yet">
                 {tab === "high_priority"
-                  ? "No confirmed failures. A failure needs two matching checks at least 24 hours apart."
+                  ? "No R0/R1 leads yet. A lead needs a confirmed website failure and proof the business is still operating."
                   : "Run a check to fill this list."}
               </Empty>
             ) : (
-              <ul>{list.data.items.map((it) => <Row key={it.company_id} item={it} />)}</ul>
+              <ul>{list.data.items.map((it) => <Row key={it.company_id} item={it} onChanged={reloadAll} />)}</ul>
             )}
         </div>
       </Card>

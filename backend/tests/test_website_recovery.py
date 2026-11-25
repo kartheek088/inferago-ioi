@@ -252,9 +252,14 @@ def test_overview_counts_come_from_latest_checks(web, monkeypatch):
         ov = wr.overview(db)
     assert ov["businesses_discovered"] == 2
     assert ov["websites_checked"] == 2
-    # A first failure is suspected, so it belongs in Needs Verification, not High Priority.
-    assert ov["excluded"] == 1 and ov["needs_verification"] == 1 and ov["high_priority"] == 0
+    assert ov["failures_detected"] == 1 and ov["pending_confirmation"] == 1 and ov["confirmed"] == 0
     assert ov["by_status"]["unhealthy_suspected"] == 1
+    from app.ioi3 import recovery_intel as intel
+
+    with SessionLocal() as db:
+        board = intel.overview(db)
+    # These synthetic companies have no industry, so the scope gate excludes them; nothing is High Priority.
+    assert board["high_priority"] == 0 and board["excluded"] == 2
 
 
 # --- API ----------------------------------------------------------------------------------------
