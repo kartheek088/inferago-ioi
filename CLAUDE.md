@@ -78,7 +78,9 @@ cd frontend && npm run typecheck && npm run build
   count only on near-empty pages (working contact forms contain them). Never store page HTML. A broken website is not
   buying intent. Activity (`ioi3/recovery_intel.py`) needs dated evidence; undated listings never count; owner records
   (`method=manual`) stay apart from automatic facts. Directory mobiles / free-mail contacts never pass the contact gate
-  until the owner approves them. R1 needs every gate; R0 only from an owner-recorded confirmed need.
+  until the owner approves them. R1 needs every gate; R0 only from an owner-recorded confirmed need. Only R0/R1 can be
+  approved into Outreach (`lead_source=website_recovery`); its draft states dated observations, never a need. Rates in
+  the per-source comparison stay hidden below 10 contacted.
 - **Cheapest option first.** Configure what a seller already pays for, or give them a free form, before
   offering to build. Never replace a working checkout or ask for a domain transfer for a workflow job.
 

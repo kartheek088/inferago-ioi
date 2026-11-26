@@ -90,7 +90,8 @@ def fact_out(f: Fact) -> dict[str, Any]:
 def deal_out(d: Deal) -> dict[str, Any]:
     return {"id": d.id, "company_id": d.company_id, "company": d.company.name,
             # Which pipeline the lead came from, so the shared board can label and filter it.
-            "channel": d.company.channel, "stage": d.stage, "outcome": d.outcome,
+            "channel": d.company.channel, "lead_source": d.company.lead_source, "stage": d.stage, "outcome": d.outcome,
+            "outcome_reason": d.outcome_reason,
             "contact_name": d.contact_name, "confirmed_requirement": d.confirmed_requirement, "offer": d.offer,
             "potential_amount": d.potential_amount, "quoted_amount": d.quoted_amount, "expected_payment_date": d.expected_payment_date,
             "delivery_status": d.delivery_status, "next_follow_up_at": d.next_follow_up_at, "notes": d.notes,
@@ -648,13 +649,22 @@ def outreach(channel: str | None = Query(None, pattern="^(b2b|social_commerce)$"
         stmt = stmt.where(Company.channel == channel)
     rows = db.scalars(stmt).all()
     biz = _business(db)
+    from app.ioi3 import recovery_intel
+
+    reviews = recovery_intel.reviews_for(db, [x.id for c in rows for x in c.contacts])
     out = []
     for c in rows:
         last = db.scalar(select(Activity).where(Activity.company_id == c.id).order_by(Activity.occurred_at.desc()))
         deal = db.scalar(select(Deal).where(Deal.company_id == c.id))
-        out.append({**card(c), "channel": c.channel,
-                    "contacts": [{"kind": x.kind, "value": x.value, "official": x.official, "source_url": x.source_url}
-                                 for x in c.contacts],
+        contacts = []
+        for x in c.contacts:
+            v = recovery_intel.contact_view(x, reviews.get(x.id))
+            # A contact the owner rejected is never offered. Recovery leads show only usable business routes.
+            if v["review"] == "rejected" or (c.lead_source == recovery_intel.LEAD_SOURCE and not v["usable"]):
+                continue
+            contacts.append({"kind": x.kind, "value": x.value, "official": x.official, "source_url": x.source_url,
+                             "needs_review": v["needs_review"]})
+        out.append({**card(c), "channel": c.channel, "lead_source": c.lead_source, "contacts": contacts,
                     "outreach": sales.draft(c, biz.get("sender_name", ""), biz.get("sender_link", "")),
                     "last_activity": {"kind": last.kind, "summary": last.summary, "at": last.occurred_at} if last else None,
                     "deal_stage": deal.stage if deal else None})
@@ -790,6 +800,7 @@ def patch_deal(did: int, body: DealPatch, db: Session = DB, who: str = Depends(a
 class StageIn(BaseModel):
     stage: str | None = None
     outcome: str | None = None
+    outcome_reason: str | None = Field(None, max_length=300)  # why it was lost / declined, in the owner's words
 
 
 @router.post("/deals/{did}/stage")
@@ -799,7 +810,7 @@ def stage(did: int, body: StageIn, db: Session = DB, who: str = Depends(actor)):
         if body.stage:
             sales.move(db, d, body.stage, who)
         if body.outcome is not None or (body.stage is None):
-            sales.set_outcome(db, d, body.outcome or None, who)
+            sales.set_outcome(db, d, body.outcome or None, who, body.outcome_reason)
     except sales.SalesError as exc:
         _err(exc)
     db.commit()

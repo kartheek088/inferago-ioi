@@ -1,5 +1,6 @@
 import { useState, type FormEvent, type ReactNode } from "react";
-import { Check, Search, Trash2, X } from "lucide-react";
+import { Link } from "react-router-dom";
+import { Check, Search, Send, Trash2, X } from "lucide-react";
 import { Badge, Button, ErrorState, Ext, Field, Input, Notice, Select, Spinner, Textarea } from "../../components/ui";
 import { api } from "../../lib/api";
 import { ago } from "../../lib/format";
@@ -75,6 +76,7 @@ export type DossierData = {
   alternatives: { url: string; found_via: string; status: string; reason: string | null; checked_at: string }[];
   contacts: Contact[];
   check_yourself: { label: string; url: string }[];
+  outreach?: { approved: boolean; lead_source: string | null; ready: boolean };
 };
 
 export function Tag({ map, value }: { map: Record<string, { label: string; tone: Tone }>; value: string }) {
@@ -201,6 +203,7 @@ export function Dossier({ id, onChanged }: { id: number; onChanged?: () => void 
   const q = useQuery(() => api.get<DossierData>(`/recovery/companies/${id}`), [id]);
   const [altBusy, setAltBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+  const [approveErr, setApproveErr] = useState<string | null>(null);
   if (q.loading && !q.data) return <Spinner />;
   if (q.error || !q.data) return <ErrorState error={q.error} onRetry={q.reload} />;
   const d = q.data;
@@ -218,6 +221,15 @@ export function Dossier({ id, onChanged }: { id: number; onChanged?: () => void 
   async function remove(eid: number) {
     await api.del(`/recovery/evidence/${eid}`);
     refresh();
+  }
+  async function approve() {
+    setApproveErr(null);
+    try {
+      await api.post(`/recovery/companies/${id}/approve`);
+      refresh();
+    } catch (x) {
+      setApproveErr(x instanceof Error ? x.message : String(x));
+    }
   }
   async function findNewer() {
     setAltBusy(true); setMsg(null);
@@ -248,6 +260,16 @@ export function Dossier({ id, onChanged }: { id: number; onChanged?: () => void 
           ))}
         </ul>
         <p className="mt-2 text-xs text-subtle">Unknowns: {d.qualification.friction.join(" · ")}</p>
+        {d.outreach?.approved ? (
+          <p className="mt-3 text-sm"><Badge tone="ok">Approved</Badge> It's in <Link to="/outreach" className="underline">Outreach</Link> with a
+            draft message — nothing is sent until you contact them.</p>
+        ) : d.outreach?.ready ? (
+          <div className="mt-3 flex flex-wrap items-center gap-3">
+            <Button size="sm" onClick={approve}><Send className="h-4 w-4" /> Approve for outreach</Button>
+            <span className="text-xs text-subtle">Adds it to Outreach with a factual draft about what the checks saw. IOI sends nothing.</span>
+          </div>
+        ) : null}
+        {approveErr && <Notice kind="err">{approveErr}</Notice>}
       </Section>
 
       <Section title="Is the business still operating?">

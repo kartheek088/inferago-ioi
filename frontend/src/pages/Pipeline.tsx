@@ -66,7 +66,7 @@ export default function Pipeline() {
                           <article key={x.id} className="rounded-xl border border-border bg-surface p-3 text-sm shadow-sm transition hover:shadow-md">
                             <button className="text-left font-medium hover:text-brand" onClick={() => setOpen(x)}>{x.company}</button>
                             {x.channel === "social_commerce" && <div><Badge tone="brand" title="Came from Social Commerce discovery">Social</Badge></div>}
-                            {x.outcome && <div><Badge tone={x.outcome === "follow_up_later" ? "warn" : "bad"}>{d.outcomes.find((o) => o.key === x.outcome)?.label}</Badge></div>}
+                            {x.outcome && <div><Badge tone={x.outcome === "follow_up_later" ? "warn" : "bad"}>{d.outcomes.find((o) => o.key === x.outcome)?.label}</Badge>{x.outcome_reason && <span className="ml-1 text-xs text-subtle">{x.outcome_reason}</span>}</div>}
                             <div className="mt-1 text-xs text-subtle">{x.offer ?? "No offer yet"}</div>
                             <div className="mt-1 text-xs tabular-nums">{x.quoted_amount ? `Quoted ${rupees(x.quoted_amount)}` : ""}{x.collected ? ` · Paid ${rupees(x.collected)}` : ""}</div>
                             {x.next_follow_up_at && <div className="mt-1 text-xs text-subtle">Follow up {date(x.next_follow_up_at)}</div>}
@@ -98,6 +98,7 @@ function DealDialog({ deal, data, onClose, onChanged }: { deal: Deal; data: Data
     next_follow_up_at: deal.next_follow_up_at?.slice(0, 10) ?? "", notes: deal.notes ?? "" });
   const [prop, setProp] = useState({ title: deal.offer ?? "", amount: "", scope: "" });
   const [pay, setPay] = useState({ amount: "", kind: "advance", received_on: new Date().toISOString().slice(0, 10), reference: "" });
+  const [reason, setReason] = useState(deal.outcome_reason ?? "");
   const done = (r: Deal | undefined) => r && onChanged(r);
   const save = async () => done(await act.run(() => api.patch<Deal>(`/deals/${deal.id}`, {
     ...f, potential_amount: f.potential_amount ? parseInt(f.potential_amount, 10) : null, expected_payment_date: f.expected_payment_date || null,
@@ -107,9 +108,16 @@ function DealDialog({ deal, data, onClose, onChanged }: { deal: Deal; data: Data
       <div className="grid grid-cols-2 gap-3">
         <Field label="Stage"><Select className="w-full" value={deal.stage} onChange={async (e) => done(await act.run(() => api.post<Deal>(`/deals/${deal.id}/stage`, { stage: e.target.value }), "Stage updated"))}>
           {data.stages.map((s) => <option key={s.key} value={s.key}>{s.label}</option>)}</Select></Field>
-        <Field label="Outcome"><Select className="w-full" value={deal.outcome ?? ""} onChange={async (e) => done(await act.run(() => api.post<Deal>(`/deals/${deal.id}/stage`, { outcome: e.target.value || null }), "Outcome updated"))}>
+        <Field label="Outcome"><Select className="w-full" value={deal.outcome ?? ""} onChange={async (e) => done(await act.run(() => api.post<Deal>(`/deals/${deal.id}/stage`, { outcome: e.target.value || null, outcome_reason: reason || null }), "Outcome updated"))}>
           <option value="">Open</option>{data.outcomes.map((o) => <option key={o.key} value={o.key}>{o.label}</option>)}</Select></Field>
       </div>
+      {deal.outcome && deal.outcome !== "follow_up_later" && (
+        <div className="flex items-end gap-2">
+          <Field label="Why?" hint="Their reason, in a few words — this is how you learn which leads are worth calling"><Input value={reason} maxLength={300}
+            placeholder="e.g. a relative maintains the site" onChange={(e) => setReason(e.target.value)} /></Field>
+          <Button size="sm" onClick={async () => done(await act.run(() => api.post<Deal>(`/deals/${deal.id}/stage`, { outcome: deal.outcome, outcome_reason: reason || null }), "Reason saved"))}>Save reason</Button>
+        </div>
+      )}
       <div className="grid grid-cols-3 gap-2 rounded-lg bg-muted p-3 text-sm">
         <div><div className="text-xs text-subtle">Quoted</div>{rupees(deal.quoted_amount)}</div>
         <div><div className="text-xs text-subtle">Collected</div>{rupees(deal.collected)}</div>

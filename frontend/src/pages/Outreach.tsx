@@ -9,7 +9,8 @@ import type { CompanyCard, Outreach as OutreachT } from "../lib/types";
 
 interface Item extends CompanyCard {
   channel: string;  // b2b | social_commerce — Outreach is shared between both pipelines
-  contacts: { kind: string; value: string; official: boolean; source_url: string }[];
+  lead_source?: string | null;  // "website_recovery" when approved from Website Recovery
+  contacts: { kind: string; value: string; official: boolean; source_url: string; needs_review?: string | null }[];
   outreach: OutreachT; last_activity: { kind: string; summary: string; at: string } | null; deal_stage: string | null;
 }
 type Dialog = { kind: "contacted" | "reply" | "follow"; item: Item } | null;
@@ -43,7 +44,8 @@ export default function Outreach() {
                       {it.channel === "social_commerce"
                         ? <Badge tone="brand" title="Came from Social Commerce discovery">Social seller</Badge>
                         : <Badge tone="brand">{INDUSTRY[it.industry ?? ""]}</Badge>}
-                      {it.offer && <Badge>{it.offer}</Badge>}
+                      {it.lead_source === "website_recovery" && <Badge tone="warn" title="Approved from Website Recovery">Website down</Badge>}
+                      {it.offer && it.lead_source !== "website_recovery" && <Badge>{it.offer}</Badge>}
                       {it.deal_stage && <Badge tone="info">Pipeline: {it.deal_stage.replace(/_/g, " ")}</Badge>}
                       {it.next_follow_up_at && <Badge tone={due ? "warn" : "neutral"}><CalendarClock className="h-3 w-3" />Follow up {date(it.next_follow_up_at)}</Badge>}
                     </div>
@@ -63,6 +65,7 @@ export default function Outreach() {
                           <li key={x.value}>
                             {x.kind === "phone" ? <a href={`tel:${x.value.replace(/\s/g, "")}`}>{x.value}</a> : x.kind === "email" ? <a href={`mailto:${x.value}`}>{x.value}</a> : <Ext href={x.value}>Contact form</Ext>}
                             <span className="text-xs text-subtle"> · {x.official ? "their website" : "directory"}</span>
+                            {x.needs_review && <span className="block text-xs text-warn">{x.needs_review}</span>}
                           </li>
                         ))}
                       </ul>

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ChevronDown, ChevronRight, Globe, RefreshCw, ShieldAlert, TriangleAlert, CheckCircle2, Activity, Star, SlidersHorizontal } from "lucide-react";
+import { ChevronDown, ChevronRight, Globe, RefreshCw, ShieldAlert, TriangleAlert, CheckCircle2, Activity, Star, SlidersHorizontal, Download } from "lucide-react";
 import { Button, Card, Empty, ErrorState, Notice, PageHeader, Select, Spinner, Stat, Tabs } from "../../components/ui";
 import { api } from "../../lib/api";
 import { ago } from "../../lib/format";
@@ -151,6 +151,51 @@ function ScopeCard({ onSaved }: { onSaved: () => void }) {
   );
 }
 
+type Source = {
+  source: string; label: string; approved: number; contacted: number; replied: number; not_interested: number;
+  proposals: number; won: number; collected: number; reply_rate: number | null; win_rate: number | null;
+  lost_reasons: { company: string; outcome: string; reason: string }[];
+};
+
+/** Sales feedback: is this channel worth the effort? Counts from what you logged in Outreach and the Sales Pipeline. */
+function CompareCard() {
+  const q = useQuery(() => api.get<{ sources: Source[]; min_to_compare: number }>("/recovery/compare"), []);
+  if (q.error) return <ErrorState error={q.error} onRetry={q.reload} />;
+  if (!q.data) return null;
+  const { sources, min_to_compare } = q.data;
+  const pct = (r: number | null) => (r === null ? "—" : `${Math.round(r * 100)}%`);
+  const reasons = sources.find((s) => s.source === "website_recovery")?.lost_reasons ?? [];
+  return (
+    <Card title="Is it working?"
+      description={`From what you log in Outreach and the Sales Pipeline. Rates appear once a source has ${min_to_compare}+ businesses contacted — before that they would mislead.`}>
+      {!sources.length ? <p className="text-sm text-subtle">Nothing approved for outreach yet.</p> : (
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[34rem] text-sm">
+            <thead><tr className="text-left text-xs text-subtle">
+              <th className="py-1 pr-3 font-medium">Source</th><th className="pr-3 font-medium">Approved</th><th className="pr-3 font-medium">Contacted</th>
+              <th className="pr-3 font-medium">Replied</th><th className="pr-3 font-medium">Not interested</th><th className="pr-3 font-medium">Quoted</th>
+              <th className="pr-3 font-medium">Won</th><th className="pr-3 font-medium">Reply rate</th><th className="font-medium">Collected</th>
+            </tr></thead>
+            <tbody>{sources.map((s) => (
+              <tr key={s.source} className="border-t border-border/70">
+                <td className="py-1.5 pr-3 font-medium">{s.label}</td><td className="pr-3">{s.approved}</td><td className="pr-3">{s.contacted}</td>
+                <td className="pr-3">{s.replied}</td><td className="pr-3">{s.not_interested}</td><td className="pr-3">{s.proposals}</td>
+                <td className="pr-3">{s.won}</td><td className="pr-3">{pct(s.reply_rate)}</td><td>₹{s.collected.toLocaleString("en-IN")}</td>
+              </tr>))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {reasons.length > 0 && (
+        <div className="mt-3 text-sm">
+          <p className="font-medium">Why recovery leads said no</p>
+          <ul className="mt-1 list-disc pl-5 text-subtle">{reasons.map((r) => <li key={r.company}>{r.company} — {r.outcome}: {r.reason}</li>)}</ul>
+        </div>
+      )}
+    </Card>
+  );
+}
+
 export default function RecoveryDashboard() {
   const [tab, setTab] = useState<TabId>("high_priority");
   const [busy, setBusy] = useState(false);
@@ -159,6 +204,8 @@ export default function RecoveryDashboard() {
   const ov = useQuery(() => api.get<RecoveryOverview>("/recovery/overview"), []);
   const list = useQuery(() => api.get<{ items: RecoveryItem[] }>("/recovery/companies", { tab }), [tab]);
   const reloadAll = () => { ov.reload(); list.reload(); };
+  const [dlErr, setDlErr] = useState<string | null>(null);
+  const exportCsv = () => { setDlErr(null); api.download("/recovery/export.csv", "ioi-website-recovery.csv").catch((e) => setDlErr(String(e?.message ?? e))); };
 
   async function check(force = false) {
     setBusy(true); setRunErr(null);
@@ -208,7 +255,9 @@ export default function RecoveryDashboard() {
 
       <ScopeCard onSaved={reloadAll} />
 
-      <Card>
+      <Card action={<Button size="sm" variant="secondary" onClick={exportCsv} disabled={!o?.high_priority}
+          title="R0/R1 leads with usable business contacts only"><Download className="h-4 w-4" /> Export strong leads</Button>}>
+        {dlErr && <Notice kind="err">{dlErr}</Notice>}
         <Tabs<TabId> value={tab} onChange={setTab} tabs={[
           { id: "high_priority", label: "High-Priority", count: o?.high_priority },
           { id: "needs_verification", label: "Needs Verification", count: o?.needs_verification },
@@ -229,6 +278,8 @@ export default function RecoveryDashboard() {
             )}
         </div>
       </Card>
+
+      <CompareCard />
     </div>
   );
 }

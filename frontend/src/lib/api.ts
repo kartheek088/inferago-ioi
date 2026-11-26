@@ -69,4 +69,14 @@ export const api = {
   del: <T,>(path: string) => request<T>("DELETE", path),
   upload: <T,>(path: string, form: FormData) => request<T>("POST", path, { form }),
   url: (path: string) => `/api/v3${path}`,
+  /** Download a file the signed-in way (a plain link would not carry the token). */
+  download: async (path: string, filename: string) => {
+    const token = getToken();
+    const res = await fetch(`/api/v3${path}`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+    if (!res.ok) throw new ApiError(res.status, `Download failed (${res.status})`);
+    const url = URL.createObjectURL(await res.blob());
+    const a = document.createElement("a");
+    a.href = url; a.download = filename; a.click();
+    URL.revokeObjectURL(url);
+  },
 };

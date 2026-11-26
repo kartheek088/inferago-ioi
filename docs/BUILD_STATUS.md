@@ -1,6 +1,6 @@
 # Build status
 
-_Last updated: 2026-11-26 (Website Recovery — health checks)_
+_Last updated: 2026-11-26 (Website Recovery — outreach hand-off and sales feedback)_
 
 ## Verification (all run locally)
 
@@ -73,9 +73,25 @@ by design until the recheck, and because activity/contact research is not built 
 **Live finding after P3:** every Needs-Verification business had only directory mobiles / Gmail on file, so the
 contact gate could never pass — which is why owner contact review was added.
 
-**Not built yet (P4):** sales-feedback fields (response, vendor, quote, lost reason) and channel comparison
-metrics, background jobs with stop/retry, quick/balanced/deep modes, approved-lead export, automatic news matching
-for recovery leads, hooking contact approval into the Outreach queue.
+**Built (P4, migration `0017_sales_feedback`, additive: `ioi_companies.lead_source`, `ioi_deals.outcome_reason`):**
+- **Approve for outreach** on an R0/R1 lead (Website Recovery report). Refused for R2/R3 with the failed gates named,
+  and refused if the latest check is not a failure. It joins the shared Outreach queue with `lead_source =
+  website_recovery`, a "Website down" badge, recovery-specific questions, and a factual, low-pressure draft built from
+  the dated checks ("I tried to open X on 25 Nov and again on 26 Nov, and …"; never "you need"). Owner edits are kept.
+- **Outreach contacts:** a contact the owner rejected is never shown (any channel); a recovery lead shows only usable
+  business routes (unapproved directory mobiles / free mail are hidden); other channels show the review warning.
+- **Lost reason** on deals (Sales Pipeline → Outcome → "Why?"), ≤ 300 chars, screened for phone numbers / emails,
+  cleared when a deal is reopened.
+- **Is it working?** card: per-source funnel (Website Recovery vs B2B Prospects vs Social Commerce): approved,
+  contacted, replied, not interested, quoted, won, collected — from logged activity only. Rates are hidden until a
+  source has 10+ contacted, so two calls are never shown as a conversion rate. Lists the recovery leads' lost reasons.
+- **Export strong leads** (CSV, signed-in download): R0/R1 only, usable business contacts only, cells starting with
+  `= + - @` are neutralised (CSV injection). Exporting approves nothing.
+- Performance on a copy of the live DB (215 companies, 28 checks): board 30 ms warm / 430 ms cold, report 5 ms,
+  comparison 3 ms — no background job needed at this size.
+
+**Not built (by choice or later):** background check jobs with stop/retry and quick/balanced/deep modes (a run is
+capped at 25 single GETs and finishes in the request); automatic news matching for recovery leads.
 
 ## Social Commerce Intelligence (2026-11-23)
 

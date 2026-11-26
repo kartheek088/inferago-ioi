@@ -480,6 +480,8 @@ def dossier(db: Session, company_id: int) -> dict[str, Any] | None:
                           "checked_at": x.checked_at.isoformat()} for x in alts],
         "contacts": a["contacts"],
         "check_yourself": manual_check_links(c),
+        "outreach": {"approved": c.outreach_approved_at is not None, "lead_source": c.lead_source,
+                     "ready": a["category"] in ("R0", "R1")},
     }
 
 
@@ -554,3 +556,156 @@ def review_contact(db: Session, contact_id: int, *, decision: str, note: str | N
     row.decision, row.note, row.reviewed_by, row.reviewed_at = decision, note[:200] if note else None, actor[:80], utcnow()
     db.commit()
     return contact_view(c, decision)
+
+
+# --- outreach hand-off, sales feedback, export (P4) -----------------------------------------------
+
+LEAD_SOURCE = "website_recovery"
+OUTREACH_READY = ("R0", "R1")
+
+PLAIN_FAILURE = {
+    "domain_expired_or_unresolved": "the web address does not open at all — the domain may have lapsed",
+    "tls_problem": "browsers show a security (certificate) warning instead of the site",
+    "server_error": "the server shows an error page instead of the site",
+    "not_found": "the home page shows 'not found'",
+    "placeholder_or_parked": "a placeholder or parking page shows instead of your site",
+}
+
+
+def failure_window(db: Session, company_id: int) -> tuple[WebsiteCheck, WebsiteCheck] | None:
+    """(first, latest) check of the current unbroken run of failed checks, or None if the site isn't failing now."""
+    run: list[WebsiteCheck] = []
+    for chk in db.scalars(select(WebsiteCheck).where(WebsiteCheck.company_id == company_id)
+                          .order_by(WebsiteCheck.checked_at.desc()).limit(50)):
+        if chk.status not in ("unhealthy_suspected", "unhealthy_confirmed"):
+            break
+        run.append(chk)
+    return (run[-1], run[0]) if run else None
+
+
+def recovery_draft(c: Company, first: WebsiteCheck, latest: WebsiteCheck, sender_name: str = "", sender_link: str = "") -> str:
+    """Factual and low-pressure: what was seen, when, and a question. Never claims they need anything."""
+    me = f"I'm {sender_name} from Inferago Tech Services" if sender_name else "I run Inferago Tech Services"
+    what = PLAIN_FAILURE.get(latest.observed_class or "", "it does not load properly")
+    site = wr.host_of(latest.website_url) or latest.website_url
+    when = (f"on {first.checked_at:%d %b} and again on {latest.checked_at:%d %b %Y}" if first.id != latest.id
+            else f"on {latest.checked_at:%d %b %Y}")
+    return (f"Hello {c.name} team,\n\n{me}, a small Udyam-registered web and software practice in Tamil Nadu. "
+            f"I tried to open {site} {when}, and {what}.\n\n"
+            "You may already know, or it may not matter to you — but if customers still look you up online, "
+            "I can check what has gone wrong and tell you the smallest fix, before you decide anything.\n\n"
+            "Would a 10-minute call be useful? If not, just reply 'no' and I won't follow up."
+            + (f"\n\nAbout us: {sender_link}" if sender_link else "") + "\n\nRegards")
+
+
+def approve_for_outreach(db: Session, company_id: int, *, actor: str, message: str | None = None) -> Company:
+    """Owner approval of an R0/R1 recovery lead into the shared Outreach queue. Nothing is sent."""
+    from app.ioi3 import sales
+
+    c = db.get(Company, company_id)
+    if c is None or c.channel != wr.B2B:
+        raise LookupError("not found")
+    if c.review_status in ("rejected", "duplicate"):
+        raise EvidenceError("This business is excluded; restore it first.")
+    if c.outreach_approved_at is not None and c.lead_source != LEAD_SOURCE:
+        raise EvidenceError("Already approved for outreach from B2B Prospects — it is in Outreach.")
+    d = dossier(db, company_id)
+    q = d["qualification"] if d else None
+    if q is None or q["category"] not in OUTREACH_READY:
+        still = [g["label"] for g in (q or {}).get("gates", []) if not g["passed"]]
+        raise EvidenceError("Not ready for outreach — still needs: " + (", ".join(still) or "a website check"))
+    window = failure_window(db, company_id)
+    if window is None:
+        raise EvidenceError("The website is not failing on its latest check.")
+    message = (message or "").strip()
+    if not message:
+        from app.ioi3.api import _business
+
+        biz = _business(db)
+        message = c.outreach_draft if (c.lead_source == LEAD_SOURCE and c.outreach_draft) else recovery_draft(
+            c, *window, biz.get("sender_name", ""), biz.get("sender_link", ""))
+    c.outreach_draft = message[:6000]
+    c.lead_source = LEAD_SOURCE
+    c.review_status, c.outreach_approved_by, c.outreach_approved_at = "approved", actor[:100], utcnow()
+    sales.log(db, c, "approved", f"Approved for outreach from Website Recovery ({q['category']})", actor=actor)
+    db.commit()
+    return c
+
+
+def source_of(c: Company) -> str:
+    return c.lead_source or c.channel
+
+
+SOURCE_LABELS = {LEAD_SOURCE: "Website Recovery", wr.B2B: "B2B Prospects", "social_commerce": "Social Commerce"}
+MIN_TO_COMPARE = 10  # below this many contacted, rates are noise — show counts only
+
+
+def compare(db: Session) -> dict[str, Any]:
+    """Sales funnel per lead source, from recorded activity only. Counts, plus rates once there is enough data."""
+    from sqlalchemy import func
+
+    from app.ioi3 import sales
+    from app.ioi3.models import Activity, Deal
+
+    approved = db.scalars(select(Company).where(Company.outreach_approved_at.is_not(None), Company.is_test.is_(False))).all()
+    ids = [c.id for c in approved]
+    kinds: dict[tuple[int, str], int] = {}
+    deals: dict[int, Deal] = {}
+    if ids:
+        for cid, kind, n in db.execute(select(Activity.company_id, Activity.kind, func.count())
+                                       .where(Activity.company_id.in_(ids), Activity.kind.in_(("contacted", "reply")))
+                                       .group_by(Activity.company_id, Activity.kind)):
+            kinds[(cid, kind)] = n
+        deals = {d.company_id: d for d in db.scalars(select(Deal).where(Deal.company_id.in_(ids)))}
+    replied_or_later = set(sales.STAGE_KEYS[sales.STAGE_KEYS.index("replied"):])
+    rows: dict[str, dict[str, Any]] = {}
+    for c in approved:
+        src = source_of(c)
+        r = rows.setdefault(src, {"source": src, "label": SOURCE_LABELS.get(src, src), "approved": 0, "contacted": 0,
+                                  "replied": 0, "not_interested": 0, "proposals": 0, "won": 0, "collected": 0,
+                                  "lost_reasons": []})
+        d = deals.get(c.id)
+        r["approved"] += 1
+        r["contacted"] += bool(kinds.get((c.id, "contacted")))
+        r["replied"] += bool(kinds.get((c.id, "reply"))) or bool(d and d.stage in replied_or_later)
+        if d:
+            r["not_interested"] += d.outcome == "not_interested"
+            r["proposals"] += bool(d.quoted_amount)
+            r["won"] += d.stage in sales.CONTRACTED
+            r["collected"] += sales.collected(d)
+            if d.outcome in ("not_interested", "lost", "no_response") and d.outcome_reason:
+                r["lost_reasons"].append({"company": c.name, "outcome": sales.OUTCOMES[d.outcome], "reason": d.outcome_reason})
+    for r in rows.values():
+        enough = r["contacted"] >= MIN_TO_COMPARE
+        r["reply_rate"] = round(r["replied"] / r["contacted"], 2) if enough else None
+        r["win_rate"] = round(r["won"] / r["contacted"], 2) if enough else None
+    order = [LEAD_SOURCE, wr.B2B, "social_commerce"]
+    return {"sources": sorted(rows.values(), key=lambda r: order.index(r["source"]) if r["source"] in order else 9),
+            "min_to_compare": MIN_TO_COMPARE}
+
+
+def _cell(v: Any) -> str:
+    """CSV-injection guard: a spreadsheet must never execute a cell."""
+    s = "" if v is None else str(v)
+    return "'" + s if s[:1] in ("=", "+", "-", "@", "\t", "\r") else s
+
+
+EXPORT_HEADER = ["id", "name", "locality", "business_type", "qualification", "website", "failure", "first_failed", "last_checked",
+                 "operating", "chennai", "business_contacts", "summary", "approved_for_outreach"]
+
+
+def export_rows(db: Session) -> list[list[str]]:
+    """R0/R1 leads only, with usable business contacts only (unreviewed directory mobiles / free mail are left out)."""
+    out = [EXPORT_HEADER]
+    for r in board(db):
+        if r["qualification"] not in OUTREACH_READY:
+            continue
+        d = dossier(db, r["company_id"])
+        c = db.get(Company, r["company_id"])
+        window = failure_window(db, c.id)
+        contacts = "; ".join(f"{x['value']} ({x['kind_label']}, {x['route']})" for x in d["contacts"] if x["usable"])
+        out.append([_cell(v) for v in (
+            c.id, c.name, c.locality, r["business_type"], r["qualification"], r["website"], r["observed_class"],
+            window[0].checked_at.date().isoformat() if window else "", r["checked_at"][:10], d["activity"]["status"],
+            c.location_confidence, contacts, r["summary"], "yes" if c.outreach_approved_at else "no")])
+    return out

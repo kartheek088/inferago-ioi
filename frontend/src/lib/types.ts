@@ -37,7 +37,8 @@ export interface ContactRoute { id?: number; kind: string; value: string; label?
 export interface ActivityItem { id: number; kind: string; summary: string; channel: string | null; actor: string; occurred_at: string }
 export interface Payment { id: number; amount: number; kind: string; received_on: string; reference: string | null; note: string | null }
 export interface Deal {
-  id: number; company_id: number; company: string; channel: string; stage: string; outcome: string | null; contact_name: string | null;
+  id: number; company_id: number; company: string; channel: string; lead_source?: string | null; stage: string; outcome: string | null;
+  outcome_reason?: string | null; contact_name: string | null;
   confirmed_requirement: string | null; offer: string | null; potential_amount: number | null; quoted_amount: number | null;
   expected_payment_date: string | null; delivery_status: string | null; next_follow_up_at: string | null; notes: string | null;
   collected: number; outstanding: number; payments: Payment[]; updated_at: string;

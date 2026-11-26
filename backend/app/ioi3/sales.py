@@ -47,6 +47,13 @@ def log(db: Session, c: Company, kind: str, summary: str, *, actor: str = "owner
 # Outreach draft + approval
 # ------------------------------------------------------------------------------------------------
 EXCLUDED = {"b2b": "P3", "social_commerce": "S3"}
+# Website Recovery: a broken site is not buying intent, so the call is for finding out, not pitching.
+RECOVERY_QUESTIONS = [
+    "Did you know the website isn't loading? Is it still important to you?",
+    "Who set it up, and who controls the domain and hosting now?",
+    "Do customers still find you online — Google, IndiaMART, Justdial, WhatsApp?",
+    "Would you want it restored, replaced with something simpler, or left as it is?",
+]
 
 
 def excluded_tier(c: Company) -> str:
@@ -62,6 +69,11 @@ def draft(c: Company, sender_name: str = "", sender_link: str = "") -> dict[str,
         from app.ioi3.social import outreach as social_outreach
 
         return social_outreach.draft(c, sender_name, sender_link)
+    if c.lead_source == "website_recovery":
+        # The message itself was written from the dated checks when the owner approved it (recovery_intel).
+        return {"message": c.outreach_draft or "", "edited": False, "contact_role": "Owner or whoever looks after the website",
+                "questions": RECOVERY_QUESTIONS, "lead_source": c.lead_source,
+                "notice": "IOI never sends messages. Copy the text and contact them yourself."}
     sol = c.solution or {}
     confirmed = [f for f in c.facts if f.kind == "signal" and f.review_status == "confirmed"]
     seen = [f for f in c.facts if f.kind == "workflow" and f.state == "source_verified"]
@@ -185,11 +197,18 @@ def move(db: Session, d: Deal, stage: str, actor: str) -> Deal:
     return d
 
 
-def set_outcome(db: Session, d: Deal, outcome: str | None, actor: str) -> Deal:
+def set_outcome(db: Session, d: Deal, outcome: str | None, actor: str, reason: str | None = None) -> Deal:
+    from app.ioi3.recovery_intel import has_contact_details
+
     if outcome is not None and outcome not in OUTCOMES:
         raise SalesError("Unknown outcome")
+    reason = (reason or "").strip() or None
+    if reason and has_contact_details(reason):
+        raise SalesError("Keep phone numbers and email addresses out of the reason")
     d.outcome = outcome
-    log(db, d.company, "stage", f"Outcome: {OUTCOMES.get(outcome or '', 'reopened')}", actor=actor, deal=d)
+    d.outcome_reason = reason[:300] if (outcome and reason) else None
+    log(db, d.company, "stage", f"Outcome: {OUTCOMES.get(outcome or '', 'reopened')}" + (f" — {reason[:300]}" if outcome and reason else ""),
+        actor=actor, deal=d)
     return d
 
 

@@ -166,6 +166,9 @@ class Company(_Stamped, Base):
     outreach_draft: Mapped[str | None] = mapped_column(Text)
     outreach_approved_by: Mapped[str | None] = mapped_column(String(100))
     outreach_approved_at: Mapped[datetime | None] = mapped_column(DateTime)
+    # Which screen approved it for outreach when that isn't the channel's own (e.g. "website_recovery"); drives
+    # the per-source sales comparison. None = the channel's normal approval.
+    lead_source: Mapped[str | None] = mapped_column(String(30))
     next_follow_up_at: Mapped[datetime | None] = mapped_column(DateTime, index=True)
     source_key: Mapped[str] = mapped_column(String(60))
     source_ref: Mapped[str] = mapped_column(String(200))
@@ -295,6 +298,7 @@ class Deal(_Stamped, Base):
     company_id: Mapped[int] = mapped_column(ForeignKey("ioi_companies.id", ondelete="CASCADE"), unique=True)
     stage: Mapped[str] = mapped_column(String(30), default="new_prospect", index=True)
     outcome: Mapped[str | None] = mapped_column(String(30))  # not_interested | no_response | lost | follow_up_later
+    outcome_reason: Mapped[str | None] = mapped_column(String(300))  # the owner's words: why it was lost / declined
     contact_name: Mapped[str | None] = mapped_column(String(200))
     confirmed_requirement: Mapped[str | None] = mapped_column(Text)
     offer: Mapped[str | None] = mapped_column(String(200))

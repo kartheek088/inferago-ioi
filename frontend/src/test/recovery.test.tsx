@@ -11,6 +11,10 @@ const overview = {
   alternatives_found: 0, with_usable_contact: 1, scope: { categories: null, window_days: 90 },
 };
 const scope = { categories: null, window_days: 90, available: [{ industry: "equipment_sales_service", category: "hvac_service", count: 4 }] };
+const compare = { min_to_compare: 10, sources: [
+  { source: "website_recovery", label: "Website Recovery", approved: 2, contacted: 2, replied: 1, not_interested: 1, proposals: 0, won: 0,
+    collected: 0, reply_rate: null, win_rate: null, lost_reasons: [{ company: "Sharma Engineering", outcome: "Not Interested", reason: "Nephew runs the site" }] },
+] };
 
 const item = (over: Record<string, unknown> = {}) => ({
   company_id: 1, name: "Sharma Engineering", locality: "Adyar", business_type: "hvac_service", website: "https://sharma.example/",
@@ -52,7 +56,7 @@ describe("Website Recovery", () => {
   });
 
   it("shows real counts and an honest empty High-Priority tab", async () => {
-    mockApi({ "/recovery/overview": overview, "/recovery/scope": scope, "/recovery/companies": { tab: "high_priority", items: [] } });
+    mockApi({ "/recovery/overview": overview, "/recovery/scope": scope, "/recovery/compare": compare, "/recovery/companies": { tab: "high_priority", items: [] } });
     renderAt("/website-recovery", "/website-recovery", <RecoveryDashboard />);
     expect(await screen.findByRole("heading", { name: "Website Recovery" })).toBeInTheDocument();
     expect(await screen.findByText(/No R0\/R1 leads yet/)).toBeInTheDocument();
@@ -62,7 +66,7 @@ describe("Website Recovery", () => {
 
   it("lists a bot-blocked site as access restricted, and runs a bounded check", async () => {
     const calls = mockApi({
-      "/recovery/overview": overview, "/recovery/scope": scope,
+      "/recovery/overview": overview, "/recovery/scope": scope, "/recovery/compare": compare,
       "/recovery/companies": { tab: "high_priority", items: [item()] },
       "POST /recovery/check": { checked: 1, skipped_recent: 0, failures_detected: 0, confirmed: 0, network_failures: 0,
         access_restricted: 1, errors: 0, alternatives_working: 0 },
@@ -79,7 +83,7 @@ describe("Website Recovery", () => {
 
   it("opens the dossier: gates, review-flagged contacts, and records a call", async () => {
     const calls = mockApi({
-      "/recovery/overview": overview, "/recovery/scope": scope,
+      "/recovery/overview": overview, "/recovery/scope": scope, "/recovery/compare": compare,
       "/recovery/companies": { tab: "high_priority", items: [item()] },
       "/recovery/companies/1": dossier,
       "POST /recovery/companies/1/evidence": { id: 9 },
@@ -101,7 +105,7 @@ describe("Website Recovery", () => {
 
   it("lets the owner approve a flagged contact as the business line", async () => {
     const calls = mockApi({
-      "/recovery/overview": overview, "/recovery/scope": scope,
+      "/recovery/overview": overview, "/recovery/scope": scope, "/recovery/compare": compare,
       "/recovery/companies": { tab: "high_priority", items: [item()] },
       "/recovery/companies/1": dossier,
       "POST /recovery/contacts/5/review": { id: 5, usable: true, review: "approved" },
@@ -111,6 +115,45 @@ describe("Website Recovery", () => {
     fireEvent.click(await screen.findByRole("button", { name: "It's the business line" }));
     await waitFor(() => expect(calls.some((c) => c.url === "/recovery/contacts/5/review")).toBe(true));
     expect(calls.find((c) => c.url === "/recovery/contacts/5/review")?.body).toEqual({ decision: "approved" });
+  });
+});
+
+describe("Website Recovery → Outreach", () => {
+  it("offers approval only for a ready lead and posts it", async () => {
+    const ready = { ...dossier, qualification: { ...dossier.qualification, category: "R1", bucket: "high_priority" },
+      outreach: { approved: false, lead_source: null, ready: true } };
+    const calls = mockApi({
+      "/recovery/overview": overview, "/recovery/scope": scope, "/recovery/compare": compare,
+      "/recovery/companies": { tab: "high_priority", items: [item({ qualification: "R1" })] },
+      "/recovery/companies/1": ready,
+      "POST /recovery/companies/1/approve": { id: 1, approved: true, message: "Hello" },
+    });
+    renderAt("/website-recovery", "/website-recovery", <RecoveryDashboard />);
+    fireEvent.click(await screen.findByRole("button", { name: /Sharma Engineering/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /Approve for outreach/ }));
+    await waitFor(() => expect(calls.some((c) => c.method === "POST" && c.url === "/recovery/companies/1/approve")).toBe(true));
+  });
+
+  it("does not offer approval for an R2 lead", async () => {
+    mockApi({
+      "/recovery/overview": overview, "/recovery/scope": scope, "/recovery/compare": compare,
+      "/recovery/companies": { tab: "high_priority", items: [item()] },
+      "/recovery/companies/1": { ...dossier, outreach: { approved: false, lead_source: null, ready: false } },
+    });
+    renderAt("/website-recovery", "/website-recovery", <RecoveryDashboard />);
+    fireEvent.click(await screen.findByRole("button", { name: /Sharma Engineering/ }));
+    expect(await screen.findByText("Business currently operating")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Approve for outreach/ })).not.toBeInTheDocument();
+  });
+
+  it("shows counts, no rate below the minimum, and why leads said no", async () => {
+    mockApi({ "/recovery/overview": overview, "/recovery/scope": scope, "/recovery/compare": compare,
+      "/recovery/companies": { tab: "high_priority", items: [] } });
+    renderAt("/website-recovery", "/website-recovery", <RecoveryDashboard />);
+    expect(await screen.findByText("Is it working?")).toBeInTheDocument();
+    const row = screen.getByText("Website Recovery", { selector: "td" }).closest("tr")!;
+    expect(within(row).getByText("—")).toBeInTheDocument();
+    expect(screen.getByText(/Nephew runs the site/)).toBeInTheDocument();
   });
 });
 

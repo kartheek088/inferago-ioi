@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { CheckCircle2, CircleDashed, Download, XCircle } from "lucide-react";
 import { Badge, Button, Card, ErrorState, Field, Input, Modal, Msg, Notice, PageHeader, Select, Spinner, Tabs, Textarea } from "../components/ui";
-import { api, getToken } from "../lib/api";
+import { api } from "../lib/api";
 import { useAction, useQuery } from "../lib/hooks";
 import { ago, date } from "../lib/format";
 import { AIChip } from "../components/intel";
@@ -18,15 +18,7 @@ interface SettingsData {
   ai: { configured: boolean; provider: string | null; model: string | null; how_to_configure: string };
 }
 
-async function download(path: string, filename: string) {
-  const token = getToken();
-  const res = await fetch(`/api/v3${path}`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
-  if (!res.ok) throw new Error(`Download failed (${res.status})`);
-  const url = URL.createObjectURL(await res.blob());
-  const a = document.createElement("a");
-  a.href = url; a.download = filename; a.click();
-  URL.revokeObjectURL(url);
-}
+const download = (path: string, filename: string) => api.download(path, filename);
 
 export default function Settings() {
   const [sp, setSp] = useSearchParams();

@@ -5,10 +5,13 @@ Nothing here contacts a business. Evidence is recorded by the owner; outreach st
 
 from __future__ import annotations
 
+import csv
+import io
 from datetime import date
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -130,3 +133,33 @@ def put_scope(body: ScopeIn, db: Session = DB):
     set_setting(db, intel.SCOPE_KEY, {"categories": body.categories, "window_days": body.window_days})
     db.commit()
     return {**intel.get_scope(db), "available": intel.categories(db)}
+
+
+class ApproveIn(BaseModel):
+    message: str | None = Field(None, max_length=6000)
+
+
+@router.post("/companies/{company_id}/approve")
+def approve_for_outreach(company_id: int, body: ApproveIn | None = None, db: Session = DB, who: str = Depends(actor)):
+    """Owner approval of an R0/R1 lead: it appears in Outreach with a factual draft. IOI sends nothing."""
+    try:
+        c = intel.approve_for_outreach(db, company_id, actor=who, message=body.message if body else None)
+    except LookupError:
+        raise HTTPException(404, "not found") from None
+    except intel.EvidenceError as exc:
+        raise HTTPException(422, str(exc)) from None
+    return {"id": c.id, "approved": True, "message": c.outreach_draft}
+
+
+@router.get("/compare")
+def compare(db: Session = DB):
+    return intel.compare(db)
+
+
+@router.get("/export.csv")
+def export_csv(db: Session = DB):
+    """R0/R1 leads with usable business contacts only. Directory mobiles / free mail appear only once you approve them."""
+    buf = io.StringIO()
+    csv.writer(buf).writerows(intel.export_rows(db))
+    return StreamingResponse(iter([buf.getvalue()]), media_type="text/csv",
+                             headers={"Content-Disposition": f'attachment; filename="ioi-website-recovery-{intel.local_today()}.csv"'})
